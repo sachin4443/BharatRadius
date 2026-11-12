@@ -108,8 +108,16 @@ builder.Services.AddCors(options =>
     });
 });
 
+// ---------------------------------------------------------------------------
+// Background jobs. Each one can be switched off in appsettings.json
+// ("BackgroundJobs" section). On a UAT/test server that uses a COPY of the live
+// database, keep the router-touching jobs OFF, otherwise UAT would disconnect
+// live subscribers or reconfigure the live MikroTik routers.
+// ---------------------------------------------------------------------------
+bool JobEnabled(string name) => builder.Configuration.GetValue("BackgroundJobs:" + name, true);
+
 // Register your RADIUS Background Service
-if (!builder.Environment.IsDevelopment())
+if (!builder.Environment.IsDevelopment() && JobEnabled("RadiusServer"))
 {
     builder.Services.AddHostedService<RadiusServerService>();
 }
@@ -121,13 +129,22 @@ builder.Services.AddScoped<ISubscriberConnectionService, SubscriberConnectionSer
 builder.Services.AddScoped<
     ISubscriberLiveSpeedService,
     SubscriberLiveSpeedService>();
-builder.Services.AddHostedService<ExpiredSubscriberService>();
+if (JobEnabled("ExpiredSubscribers"))
+{
+    builder.Services.AddHostedService<ExpiredSubscriberService>();
+}
 builder.Services.AddMemoryCache();
-builder.Services.AddHostedService<AutoConfigureNasService>();
+if (JobEnabled("AutoConfigureNas"))
+{
+    builder.Services.AddHostedService<AutoConfigureNasService>();
+}
 builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddHttpClient("sms", c => c.Timeout = TimeSpan.FromSeconds(20));
 builder.Services.AddScoped<RadiusSoftware.API.Services.Sms.ISmsService, RadiusSoftware.API.Services.Sms.SmsService>();
-builder.Services.AddHostedService<RadiusSoftware.API.Services.Sms.SmsReminderService>();
+if (JobEnabled("SmsReminders"))
+{
+    builder.Services.AddHostedService<RadiusSoftware.API.Services.Sms.SmsReminderService>();
+}
 var app = builder.Build();
 
 // Program.cs me (DbContext ya Controllers register hone se pehle)

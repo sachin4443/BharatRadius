@@ -68,11 +68,19 @@ public class RadiusServerService : BackgroundService
     private readonly ILogger _logger;
     private readonly IHubContext<RadiusLogHub> _hubContext;
 
+    private readonly int _listenAuthPort;
+    private readonly int _listenAcctPort;
+
     public RadiusServerService(
         IServiceProvider serviceProvider,
         ILogger<RadiusServerService> logger,
-        IHubContext<RadiusLogHub> hubContext)
+        IHubContext<RadiusLogHub> hubContext,
+        IConfiguration configuration)
     {
+        // UDP ports this server listens on (default 1812 / 1813). A second
+        // instance on the same machine (e.g. UAT) must use different ports.
+        _listenAuthPort = configuration.GetValue("RadiusServer:ListenAuthPort", AuthenticationPort);
+        _listenAcctPort = configuration.GetValue("RadiusServer:ListenAcctPort", AccountingPort);
         _serviceProvider = serviceProvider;
         _logger = logger;
         _hubContext = hubContext;
@@ -132,20 +140,20 @@ public class RadiusServerService : BackgroundService
             new UdpClient(
                 new IPEndPoint(
                     IPAddress.Any,
-                    AuthenticationPort));
+                    _listenAuthPort));
 
         using var accountingListener =
             new UdpClient(
                 new IPEndPoint(
                     IPAddress.Any,
-                    AccountingPort));
+                    _listenAcctPort));
 
         await LogAndBroadcast(
-            "🚀 .NET RADIUS Authentication Server started on UDP 1812",
+            $"🚀 .NET RADIUS Authentication Server started on UDP {_listenAuthPort}",
             "SYSTEM");
 
         await LogAndBroadcast(
-            "📊 .NET RADIUS Accounting Server started on UDP 1813",
+            $"📊 .NET RADIUS Accounting Server started on UDP {_listenAcctPort}",
             "SYSTEM");
 
         var authenticationTask =
