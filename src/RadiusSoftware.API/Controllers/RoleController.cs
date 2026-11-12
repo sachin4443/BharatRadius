@@ -1,10 +1,12 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using RadiusSoftware.Core.Entities;
 using RadiusSoftware.Infrastructure.Data;
 
 namespace RadiusSoftware.API.Controllers;
 
+[Authorize]
 [Route("api/[controller]")]
 [ApiController]
 public class RoleController : ControllerBase

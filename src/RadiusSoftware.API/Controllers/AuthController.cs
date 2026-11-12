@@ -1,7 +1,8 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using RadiusSoftware.API.Security;
 using RadiusSoftware.Core.DTOs;
 using RadiusSoftware.Core.Entities;
 using RadiusSoftware.Infrastructure.Data;
@@ -18,12 +19,24 @@ public class AuthController : ControllerBase
     private readonly AppDbContext _context;
     private readonly IConfiguration _configuration;
     private readonly IWebHostEnvironment _env;
+    private readonly ISiteAccessService _access;
 
-    public AuthController(AppDbContext context, IConfiguration configuration, IWebHostEnvironment env)
+    public AuthController(AppDbContext context, IConfiguration configuration, IWebHostEnvironment env, ISiteAccessService access)
     {
         _context = context;
         _configuration = configuration;
         _env = env;
+        _access = access;
+    }
+
+    private DateTime TokenExpiry(bool rememberMe = false)
+    {
+        if (rememberMe)
+        {
+            var days = double.TryParse(_configuration["JwtSettings:RememberMeDays"], out var d) ? d : 7;
+            return DateTime.UtcNow.AddDays(days);
+        }
+        return DateTime.UtcNow.AddMinutes(double.Parse(_configuration["JwtSettings:ExpiryMinutes"]!));
     }
 
     [HttpPost("login")]
@@ -33,9 +46,16 @@ public class AuthController : ControllerBase
             .Include(u => u.Organization)
             .FirstOrDefaultAsync(u => (u.Email == model.Email || u.Username == model.Email) && u.IsActive);
 
-        if (user == null || user.PasswordHash != model.Password)
+        if (user == null || !PasswordUtil.Verify(user.PasswordHash, model.Password, out var needsUpgrade))
         {
             return Unauthorized(new { message = "Invalid email or password" });
+        }
+
+        if (needsUpgrade)
+        {
+            // Old plain-text password -> store as secure hash from now on
+            user.PasswordHash = PasswordUtil.Hash(model.Password);
+            await _context.SaveChangesAsync();
         }
 
         var userSite = await _context.Sites.FirstOrDefaultAsync(s => s.UserId == user.Id && !s.IsDeleted);
@@ -56,7 +76,7 @@ public class AuthController : ControllerBase
                 new Claim("IsSuperAdmin", user.IsSuperAdmin.ToString()),
                 new Claim("Level", levelStr)
             }),
-            Expires = DateTime.UtcNow.AddMinutes(double.Parse(_configuration["JwtSettings:ExpiryMinutes"]!)),
+            Expires = TokenExpiry(model.RememberMe),
             Issuer = _configuration["JwtSettings:Issuer"],
             Audience = _configuration["JwtSettings:Audience"],
             SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)
@@ -107,7 +127,7 @@ public class AuthController : ControllerBase
             Username = "superadmin",
             Email = "admin@radius.com",
             Mobile = "9999999999",
-            PasswordHash = "root@123",
+            PasswordHash = PasswordUtil.Hash("root@123"),
             IsSuperAdmin = true
         };
 
@@ -117,9 +137,16 @@ public class AuthController : ControllerBase
         return Ok(new { message = "SuperAdmin created successfully! Username: superadmin, Password: root@123" });
     }
 
+    [Authorize]
     [HttpPost("impersonate")]
     public async Task<IActionResult> Impersonate([FromQuery] string companyName)
     {
+        // Only the super admin may log in as a company
+        if (!_access.IsSuperAdmin)
+        {
+            return Forbid();
+        }
+
         var targetOrg = await _context.Organizations
             .FirstOrDefaultAsync(o => o.Name == companyName && o.IsActive);
 
@@ -148,7 +175,7 @@ public class AuthController : ControllerBase
                 new Claim("OrganizationId", targetUser.OrganizationId.ToString()),
                 new Claim("IsSuperAdmin", targetUser.IsSuperAdmin.ToString())
             }),
-            Expires = DateTime.UtcNow.AddMinutes(double.Parse(_configuration["JwtSettings:ExpiryMinutes"]!)),
+            Expires = TokenExpiry(),
             Issuer = _configuration["JwtSettings:Issuer"],
             Audience = _configuration["JwtSettings:Audience"],
             SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)
@@ -168,9 +195,16 @@ public class AuthController : ControllerBase
     }
 
     // 🚀 NEW: Specific Endpoint for Site Impersonation
+    [Authorize]
     [HttpPost("impersonate-site")]
     public async Task<IActionResult> ImpersonateSite([FromQuery] Guid siteId)
     {
+        // Only allowed for the super admin or a parent site / organization admin of this site
+        if (!await _access.CanAccessSiteAsync(siteId))
+        {
+            return Forbid();
+        }
+
         var targetSite = await _context.Sites
             .Include(s => s.User)
             .FirstOrDefaultAsync(s => s.Id == siteId && !s.IsDeleted);
@@ -204,7 +238,7 @@ public class AuthController : ControllerBase
                 new Claim("IsSuperAdmin", targetUser.IsSuperAdmin.ToString()),
                 new Claim("Level", levelStr)
             }),
-            Expires = DateTime.UtcNow.AddMinutes(double.Parse(_configuration["JwtSettings:ExpiryMinutes"]!)),
+            Expires = TokenExpiry(),
             Issuer = _configuration["JwtSettings:Issuer"],
             Audience = _configuration["JwtSettings:Audience"],
             SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import apiClient from "../services/api";
+import { openCafPdf } from "../services/openCafPdf";
 
 // ============================================================
 // TYPES
@@ -806,24 +807,10 @@ const CAF: React.FC = () => {
         return;
       }
 
-      const baseUrl =
-        apiClient.defaults.baseURL ||
-        "";
-
-      const serverUrl =
-        baseUrl.replace(
-          /\/api\/?$/,
-          ""
-        );
-
-      const pdfUrl =
-        `${serverUrl}${caf.pdfPath}`;
-
-      window.open(
-        pdfUrl,
-        "_blank",
-        "noopener,noreferrer"
-      );
+      openCafPdf(caf.id).catch((err) => {
+        console.error("Old CAF open error:", err);
+        setError("Unable to open CAF PDF.");
+      });
     } catch (err: any) {
       console.error(
         "Old CAF open error:",

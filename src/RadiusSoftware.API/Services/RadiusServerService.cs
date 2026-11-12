@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
@@ -32,6 +32,7 @@ public class RadiusServerService : BackgroundService
     private const byte FramedProtocol = 7;
     private const byte FramedIpAddress = 8;
     private const byte ReplyMessage = 18;
+    private const byte SessionTimeout = 27;
     private const byte ProxyState = 33;
 
     // Accounting
@@ -67,11 +68,19 @@ public class RadiusServerService : BackgroundService
     private readonly ILogger _logger;
     private readonly IHubContext<RadiusLogHub> _hubContext;
 
+    private readonly int _listenAuthPort;
+    private readonly int _listenAcctPort;
+
     public RadiusServerService(
         IServiceProvider serviceProvider,
         ILogger<RadiusServerService> logger,
-        IHubContext<RadiusLogHub> hubContext)
+        IHubContext<RadiusLogHub> hubContext,
+        IConfiguration configuration)
     {
+        // UDP ports this server listens on (default 1812 / 1813). A second
+        // instance on the same machine (e.g. UAT) must use different ports.
+        _listenAuthPort = configuration.GetValue("RadiusServer:ListenAuthPort", AuthenticationPort);
+        _listenAcctPort = configuration.GetValue("RadiusServer:ListenAcctPort", AccountingPort);
         _serviceProvider = serviceProvider;
         _logger = logger;
         _hubContext = hubContext;
@@ -80,6 +89,10 @@ public class RadiusServerService : BackgroundService
     // =========================================================
     // LOGGING
     // =========================================================
+
+    // Site of the NAS currently being processed. AsyncLocal keeps it
+    // separate for every packet that is processed in parallel.
+    private static readonly AsyncLocal<Guid?> CurrentNasSite = new();
 
     private async Task LogAndBroadcast(
         string message,
@@ -99,7 +112,13 @@ public class RadiusServerService : BackgroundService
 
         try
         {
-            await _hubContext.Clients.All.SendAsync(
+            // Super admin sees everything, a site only sees logs of its own NAS
+            var groups = new List<string> { RadiusLogHub.SuperAdminGroup };
+            var siteId = CurrentNasSite.Value;
+            if (siteId.HasValue)
+                groups.Add(RadiusLogHub.SiteGroup(siteId.Value));
+
+            await _hubContext.Clients.Groups(groups).SendAsync(
                 "ReceiveLog",
                 fullMessage,
                 type);
@@ -121,20 +140,20 @@ public class RadiusServerService : BackgroundService
             new UdpClient(
                 new IPEndPoint(
                     IPAddress.Any,
-                    AuthenticationPort));
+                    _listenAuthPort));
 
         using var accountingListener =
             new UdpClient(
                 new IPEndPoint(
                     IPAddress.Any,
-                    AccountingPort));
+                    _listenAcctPort));
 
         await LogAndBroadcast(
-            "🚀 .NET RADIUS Authentication Server started on UDP 1812",
+            $"🚀 .NET RADIUS Authentication Server started on UDP {_listenAuthPort}",
             "SYSTEM");
 
         await LogAndBroadcast(
-            "📊 .NET RADIUS Accounting Server started on UDP 1813",
+            $"📊 .NET RADIUS Accounting Server started on UDP {_listenAcctPort}",
             "SYSTEM");
 
         var authenticationTask =
@@ -297,6 +316,8 @@ public class RadiusServerService : BackgroundService
 
             return;
         }
+
+        CurrentNasSite.Value = nas.SiteId;
 
         if (!nas.IsRadiusConfigured)
         {
@@ -534,7 +555,7 @@ public class RadiusServerService : BackgroundService
                 nas,
                 username,
                 "REJECT",
-                "Subscriber account is inactive.",
+                "Subscriber is Suspended.",
                 callingStationId,
                 framedIp,
                 acctSessionId,
@@ -544,7 +565,7 @@ public class RadiusServerService : BackgroundService
             await db.SaveChangesAsync();
 
             await LogAndBroadcast(
-                $"Access-Reject: {username} account inactive.",
+                $"Access-Reject: {username} is suspended.",
                 "ERROR");
 
             await SendAccessRejectAsync(
@@ -553,7 +574,7 @@ public class RadiusServerService : BackgroundService
                 requestAuthenticator,
                 attributes,
                 nas.SharedSecret,
-                "Subscriber account is inactive.",
+                "Subscriber is Suspended.",
                 hasMessageAuthenticator,
                 remoteEndpoint,
                 listener);
@@ -573,7 +594,7 @@ public class RadiusServerService : BackgroundService
                 nas,
                 username,
                 "REJECT",
-                "Subscriber connection is disabled.",
+                "Subscriber is Disabled.",
                 callingStationId,
                 framedIp,
                 acctSessionId,
@@ -592,7 +613,47 @@ public class RadiusServerService : BackgroundService
                 requestAuthenticator,
                 attributes,
                 nas.SharedSecret,
-                "Subscriber connection is disabled.",
+                "Subscriber is Disabled.",
+                hasMessageAuthenticator,
+                remoteEndpoint,
+                listener);
+
+            return;
+        }
+
+        // -----------------------------------------------------
+        // 9b. EXPIRY DATE
+        // -----------------------------------------------------
+
+        if (subscriber.ExpireDate.HasValue &&
+            subscriber.ExpireDate.Value <= DateTime.UtcNow)
+        {
+            await RecordAuthenticationLogAsync(
+                db,
+                subscriber,
+                nas,
+                username,
+                "REJECT",
+                "Subscriber Account is Expired.",
+                callingStationId,
+                framedIp,
+                acctSessionId,
+                requestAuthenticator,
+                "ACCOUNT_EXPIRED");
+
+            await db.SaveChangesAsync();
+
+            await LogAndBroadcast(
+                $"Access-Reject: {username} account expired on {subscriber.ExpireDate.Value:yyyy-MM-dd HH:mm}.",
+                "ERROR");
+
+            await SendAccessRejectAsync(
+                requestPacket,
+                identifier,
+                requestAuthenticator,
+                attributes,
+                nas.SharedSecret,
+                "Your account has expired. Please recharge.",
                 hasMessageAuthenticator,
                 remoteEndpoint,
                 listener);
@@ -777,7 +838,7 @@ public class RadiusServerService : BackgroundService
                 nas,
                 username,
                 "REJECT",
-                "Invalid PPPoE username or password.",
+                "Wrong Password.",
                 callingStationId,
                 framedIp,
                 acctSessionId,
@@ -929,6 +990,20 @@ public class RadiusServerService : BackgroundService
                     rateLimit));
         }
 
+        // Session-Timeout: router disconnects the user exactly when the
+        // package expires (the user then gets "expired" on reconnect).
+        if (subscriber.ExpireDate.HasValue)
+        {
+            var secondsLeft = (subscriber.ExpireDate.Value - DateTime.UtcNow).TotalSeconds;
+            if (secondsLeft > 0 && secondsLeft < uint.MaxValue)
+            {
+                responseAttributes.Add(
+                    CreateUInt32Attribute(
+                        SessionTimeout,
+                        (uint)Math.Ceiling(secondsLeft)));
+            }
+        }
+
         // Interim Accounting
         if (nas.InterimTime > 0)
         {
@@ -1029,6 +1104,8 @@ public class RadiusServerService : BackgroundService
 
             return;
         }
+
+        CurrentNasSite.Value = nas.SiteId;
 
         if (string.IsNullOrWhiteSpace(
                 nas.SharedSecret))
@@ -1654,6 +1731,15 @@ public class RadiusServerService : BackgroundService
             };
 
         db.RadiusAuthenticationLogs.Add(log);
+
+        // Keep the latest result on the subscriber so the subscriber list can
+        // show "Wrong Password", "Expired" etc. without scanning the log table.
+        if (subscriber != null)
+        {
+            subscriber.LastAuthResult = result;
+            subscriber.LastAuthReason = failureReason;
+            subscriber.LastAuthAt = DateTime.UtcNow;
+        }
 
         await Task.CompletedTask;
     }

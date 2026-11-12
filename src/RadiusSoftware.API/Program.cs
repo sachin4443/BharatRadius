@@ -70,6 +70,22 @@ builder.Services.AddAuthentication(options =>
         IssuerSigningKey = new SymmetricSecurityKey(
             Encoding.UTF8.GetBytes(builder.Configuration["JwtSettings:Secret"]!))
     };
+
+    // SignalR (WebSockets) cannot send an Authorization header, so the
+    // browser passes the JWT as ?access_token=... for the hub only.
+    options.Events = new JwtBearerEvents
+    {
+        OnMessageReceived = context =>
+        {
+            var accessToken = context.Request.Query["access_token"];
+            if (!string.IsNullOrEmpty(accessToken) &&
+                context.HttpContext.Request.Path.StartsWithSegments("/radiusLogHub"))
+            {
+                context.Token = accessToken;
+            }
+            return Task.CompletedTask;
+        }
+    };
 });
 
 // 🚀 FIXED CORS Policy for SignalR & REST APIs
@@ -92,20 +108,43 @@ builder.Services.AddCors(options =>
     });
 });
 
+// ---------------------------------------------------------------------------
+// Background jobs. Each one can be switched off in appsettings.json
+// ("BackgroundJobs" section). On a UAT/test server that uses a COPY of the live
+// database, keep the router-touching jobs OFF, otherwise UAT would disconnect
+// live subscribers or reconfigure the live MikroTik routers.
+// ---------------------------------------------------------------------------
+bool JobEnabled(string name) => builder.Configuration.GetValue("BackgroundJobs:" + name, true);
+
 // Register your RADIUS Background Service
-if (!builder.Environment.IsDevelopment())
+if (!builder.Environment.IsDevelopment() && JobEnabled("RadiusServer"))
 {
     builder.Services.AddHostedService<RadiusServerService>();
 }
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<RadiusSoftware.API.Security.ISiteAccessService, RadiusSoftware.API.Security.SiteAccessService>();
+builder.Services.AddScoped<RadiusSoftware.API.Services.Query.ISubscriberQueryService, RadiusSoftware.API.Services.Query.SubscriberQueryService>();
 builder.Services.AddScoped<IMikroTikService, MikroTikService>();
 builder.Services.AddScoped<ISubscriberConnectionService, SubscriberConnectionService>();
 builder.Services.AddScoped<
     ISubscriberLiveSpeedService,
     SubscriberLiveSpeedService>();
-builder.Services.AddHostedService<ExpiredSubscriberService>();
+if (JobEnabled("ExpiredSubscribers"))
+{
+    builder.Services.AddHostedService<ExpiredSubscriberService>();
+}
 builder.Services.AddMemoryCache();
-builder.Services.AddHostedService<AutoConfigureNasService>();
+if (JobEnabled("AutoConfigureNas"))
+{
+    builder.Services.AddHostedService<AutoConfigureNasService>();
+}
 builder.Services.AddScoped<IEmailService, EmailService>();
+builder.Services.AddHttpClient("sms", c => c.Timeout = TimeSpan.FromSeconds(20));
+builder.Services.AddScoped<RadiusSoftware.API.Services.Sms.ISmsService, RadiusSoftware.API.Services.Sms.SmsService>();
+if (JobEnabled("SmsReminders"))
+{
+    builder.Services.AddHostedService<RadiusSoftware.API.Services.Sms.SmsReminderService>();
+}
 var app = builder.Build();
 
 // Program.cs me (DbContext ya Controllers register hone se pehle)
@@ -140,6 +179,20 @@ app.UseHttpsRedirection();
 // Authentication MUST be before Authorization
 app.UseAuthentication();
 app.UseAuthorization();
+
+// Customer KYC documents and CAF PDFs must never be served as public static
+// files. They are only available through the authorized /api/CAF endpoints.
+app.Use(async (context, next) =>
+{
+    var path = context.Request.Path;
+    if (path.StartsWithSegments("/caf-forms", StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWithSegments("/caf-documents", StringComparison.OrdinalIgnoreCase))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+    await next();
+});
 
 app.UseStaticFiles();
 

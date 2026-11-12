@@ -1,9 +1,12 @@
-﻿namespace RadiusSoftware.Core.DTOs;
+namespace RadiusSoftware.Core.DTOs;
 
 public class LoginRequestDto
 {
     public string Email { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
+
+    /// <summary>Keep the user logged in for several days on this device.</summary>
+    public bool RememberMe { get; set; }
 }
 
 public class AuthResponseDto

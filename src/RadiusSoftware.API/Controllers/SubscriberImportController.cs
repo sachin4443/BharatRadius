@@ -1,4 +1,4 @@
-﻿using ClosedXML.Excel;
+using ClosedXML.Excel;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -87,6 +87,8 @@ public class SubscriberImportController : ControllerBase
 
         var subscribers = new List<Subscriber>();
         var errors = new List<object>();
+        var seenUsernames = new HashSet<string>();
+        int updated = 0;
         int rowNumber = headerRowIndex;
 
         foreach (var row in rows)
@@ -109,12 +111,23 @@ public class SubscriberImportController : ControllerBase
                 }
 
                 // ✨ SMART FALLBACK: Check Username / UserPassword from sheet if specific PPPoE fields are blank
-                var primaryUsername = dto.PPPoEUsername ?? dto.PortalUsername ?? dto.Username;
-                var primaryPassword = dto.PPPoEPassword ?? dto.PortalPassword ?? dto.UserPassword;
+                // (GetVal returns "" for missing columns, so ?? would never fall back)
+                static string? FirstFilled(params string?[] values) =>
+                    values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v))?.Trim();
+
+                var primaryUsername = FirstFilled(dto.PPPoEUsername, dto.Username, dto.PortalUsername);
+                var primaryPassword = FirstFilled(dto.PPPoEPassword, dto.UserPassword, dto.PortalPassword);
 
                 if (string.IsNullOrWhiteSpace(primaryUsername))
                 {
                     errors.Add(new { row = rowNumber, message = "Username / PPPoE Username is required." });
+                    continue;
+                }
+
+                var usernameKey = primaryUsername!.ToLowerInvariant();
+                if (!seenUsernames.Add(usernameKey))
+                {
+                    errors.Add(new { row = rowNumber, message = $"Username '{primaryUsername}' appears more than once in the file. Only the first row was used." });
                     continue;
                 }
 
@@ -137,10 +150,44 @@ public class SubscriberImportController : ControllerBase
                 DateTime? expireDateParsed = null;
                 if (!string.IsNullOrWhiteSpace(dto.ExpireDateStr))
                 {
-                    if (DateTime.TryParse(dto.ExpireDateStr, out var parsedDate))
+                    expireDateParsed = ParseIndianDate(dto.ExpireDateStr);
+                    if (expireDateParsed == null)
                     {
-                        expireDateParsed = DateTime.SpecifyKind(parsedDate, DateTimeKind.Utc);
+                        errors.Add(new { row = rowNumber, message = $"Expiry date '{dto.ExpireDateStr}' could not be read. Use dd-MM-yyyy." });
+                        continue;
                     }
+                }
+
+                // Username already in the database?
+                var existing = await _context.Subscribers
+                    .FirstOrDefaultAsync(x => x.PPPoEUsername.ToLower() == usernameKey);
+
+                if (existing != null)
+                {
+                    if (!siteIds.Contains(existing.SiteId))
+                    {
+                        errors.Add(new { row = rowNumber, message = $"Username '{primaryUsername}' already belongs to another company/site." });
+                        continue;
+                    }
+
+                    // Update the existing subscriber instead of creating a duplicate.
+                    // Password from the sheet is kept so users can log in without re-entering it.
+                    if (!string.IsNullOrWhiteSpace(primaryPassword)) existing.PPPoEPassword = primaryPassword;
+                    if (!string.IsNullOrWhiteSpace(dto.FullName)) existing.FullName = dto.FullName.Trim();
+                    if (!string.IsNullOrWhiteSpace(dto.Mobile)) existing.Mobile = dto.Mobile.Trim();
+                    if (!string.IsNullOrWhiteSpace(dto.Email)) existing.Email = dto.Email.Trim();
+                    if (!string.IsNullOrWhiteSpace(dto.Address)) existing.Address = dto.Address.Trim();
+                    if (!string.IsNullOrWhiteSpace(dto.City)) existing.City = dto.City.Trim();
+                    if (!string.IsNullOrWhiteSpace(dto.State)) existing.State = dto.State.Trim();
+                    if (!string.IsNullOrWhiteSpace(dto.Zip)) existing.Zip = dto.Zip.Trim();
+                    if (!string.IsNullOrWhiteSpace(dto.MacAddress)) existing.MacAddress = dto.MacAddress.Trim();
+                    if (!string.IsNullOrWhiteSpace(dto.StaticIp)) existing.StaticIp = dto.StaticIp.Trim();
+                    if (nasResult.NasId.HasValue) existing.NasId = nasResult.NasId;
+                    if (packageResult.PackageId.HasValue) existing.PackageId = packageResult.PackageId;
+                    if (expireDateParsed.HasValue) existing.ExpireDate = expireDateParsed;
+                    existing.UpdatedAt = DateTime.UtcNow;
+                    updated++;
+                    continue;
                 }
 
                 var subscriber = new Subscriber
@@ -154,8 +201,8 @@ public class SubscriberImportController : ControllerBase
                     CompanyName = dto.CompanyName?.Trim() ?? string.Empty,
                     Mobile = dto.Mobile?.Trim() ?? string.Empty,
                     Email = dto.Email?.Trim() ?? string.Empty,
-                    PortalUsername = primaryUsername.Trim(),
-                    PortalPassword = primaryPassword?.Trim() ?? string.Empty,
+                    PortalUsername = primaryUsername,
+                    PortalPassword = primaryPassword ?? string.Empty,
                     Address = dto.Address?.Trim() ?? string.Empty,
                     Zip = dto.Zip?.Trim() ?? string.Empty,
                     City = dto.City?.Trim() ?? string.Empty,
@@ -164,8 +211,8 @@ public class SubscriberImportController : ControllerBase
                     GstNo = dto.GstNo?.Trim() ?? string.Empty,
                     Comment = dto.Comment?.Trim() ?? string.Empty,
                     Service = string.IsNullOrWhiteSpace(dto.Service) ? "PPPoE" : dto.Service.Trim(),
-                    PPPoEUsername = primaryUsername.Trim(),
-                    PPPoEPassword = primaryPassword?.Trim() ?? string.Empty,
+                    PPPoEUsername = primaryUsername,
+                    PPPoEPassword = primaryPassword ?? string.Empty,
                     MacAddress = dto.MacAddress?.Trim() ?? string.Empty,
                     StaticIp = dto.StaticIp?.Trim() ?? string.Empty,
                     ConnectionEnabled = true,
@@ -183,7 +230,7 @@ public class SubscriberImportController : ControllerBase
             }
         }
 
-        if (subscribers.Count > 0)
+        if (subscribers.Count > 0 || updated > 0)
         {
             await _context.Subscribers.AddRangeAsync(subscribers);
             await _context.SaveChangesAsync();
@@ -191,12 +238,53 @@ public class SubscriberImportController : ControllerBase
 
         return Ok(new
         {
-            message = "Subscriber Excel import completed.",
+            message = updated > 0
+                ? $"Subscriber Excel import completed. {subscribers.Count} new, {updated} existing subscribers updated (no duplicates created)."
+                : "Subscriber Excel import completed.",
             imported = subscribers.Count,
+            updated,
             failed = errors.Count,
             totalRows = rows.Count,
             errors
         });
+    }
+
+    /// <summary>
+    /// Reads dates written the Indian way (dd-MM-yyyy, dd/MM/yyyy, with or without time)
+    /// or ISO (yyyy-MM-dd). A date without time means "till the end of that day" (IST).
+    /// Returned value is UTC.
+    /// </summary>
+    private static DateTime? ParseIndianDate(string raw)
+    {
+        raw = raw.Trim();
+        var formats = new[]
+        {
+            "dd-MM-yyyy HH:mm:ss", "dd-MM-yyyy HH:mm", "dd-MM-yyyy",
+            "dd/MM/yyyy HH:mm:ss", "dd/MM/yyyy HH:mm", "dd/MM/yyyy",
+            "d-M-yyyy", "d/M/yyyy", "dd.MM.yyyy",
+            "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm", "yyyy-MM-dd", "yyyy-MM-ddTHH:mm:ss",
+            "dd-MMM-yyyy", "dd MMM yyyy", "d-MMM-yyyy"
+        };
+
+        DateTime local;
+        if (!DateTime.TryParseExact(raw, formats, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out local))
+        {
+            // Excel serial number (e.g. 46310)
+            if (double.TryParse(raw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var serial) &&
+                serial > 20000 && serial < 80000)
+            {
+                local = DateTime.FromOADate(serial);
+            }
+            else if (!DateTime.TryParse(raw, System.Globalization.CultureInfo.GetCultureInfo("en-IN"),
+                         System.Globalization.DateTimeStyles.None, out local))
+            {
+                return null;
+            }
+        }
+
+        if (local.TimeOfDay == TimeSpan.Zero) local = local.Date.AddDays(1).AddSeconds(-1);
+        return RadiusSoftware.API.Services.Query.IstClock.ToUtc(local);
     }
 
     private int FindHeaderRow(IXLWorksheet worksheet)
@@ -244,12 +332,12 @@ public class SubscriberImportController : ControllerBase
             Mobile = GetVal("Mobile", "Phone", "Contact"),
             Email = GetVal("Email"),
             // Map alternative column names directly into properties
-            Username = GetVal("Username"),
-            UserPassword = GetVal("UserPassword", "Password"),
+            Username = GetVal("Username", "User Name", "UserName", "User ID", "UserId", "Login", "Login ID"),
+            UserPassword = GetVal("UserPassword", "Password", "Pass", "Secret", "User Password"),
             PortalUsername = GetVal("PortalUsername"),
             PortalPassword = GetVal("PortalPassword"),
-            PPPoEUsername = GetVal("PPPoEUsername"),
-            PPPoEPassword = GetVal("PPPoEPassword"),
+            PPPoEUsername = GetVal("PPPoEUsername", "PPPoE Username", "PPPoE User", "PPPoE ID"),
+            PPPoEPassword = GetVal("PPPoEPassword", "PPPoE Password", "PPPoE Pass"),
             Address = GetVal("Address"),
             Zip = GetVal("Zip", "Pincode"),
             City = GetVal("City"),
@@ -262,7 +350,7 @@ public class SubscriberImportController : ControllerBase
             StaticIp = GetVal("StaticIp", "Ip"),
             ConnectionEnabled = GetVal("ConnectionEnabled"),
             IsActive = GetVal("Status", "IsActive"),
-            ExpireDateStr = GetVal("ExpireDate", "Expiry date", "ExpiryDate")
+            ExpireDateStr = GetVal("ExpireDate", "Expiry date", "ExpiryDate", "Expiry Date", "Expire Date", "Expiry")
         };
     }
 

@@ -1,5 +1,6 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using RadiusSoftware.API.Security;
 using RadiusSoftware.Core.DTOs;
 using RadiusSoftware.Core.Entities;
 using RadiusSoftware.Infrastructure.Data;
@@ -54,8 +55,7 @@ public class PasswordResetController : ControllerBase
         int port = string.IsNullOrEmpty(portStr) ? 465 : int.Parse(portStr);
 
         // Generate 6-digit random OTP
-        var random = new Random();
-        var otp = random.Next(100000, 999999).ToString();
+        var otp = System.Security.Cryptography.RandomNumberGenerator.GetInt32(100000, 1000000).ToString();
 
         // Capture Device / IP Details
         var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "Unknown";
@@ -155,8 +155,7 @@ public class PasswordResetController : ControllerBase
             return NotFound(new { message = "User not found." });
         }
 
-        // Update password in plain text format as requested
-        user.PasswordHash = model.NewPassword;
+        user.PasswordHash = PasswordUtil.Hash(model.NewPassword);
         resetRecord.IsUsed = true;
 
         await _context.SaveChangesAsync();

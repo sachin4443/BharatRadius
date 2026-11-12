@@ -7,6 +7,11 @@ interface SubscriberConnectionButtonProps {
   onLive?: (subscriber: any) => void;
   onStatusChange?: (status: ConnectionStatus) => void;
   compact?: boolean;
+  /**
+   * true (default): ask the server for the live status and refresh every 5s.
+   * false: use subscriber.isOnline from the list (the list refreshes itself).
+   */
+  livePolling?: boolean;
 }
 
 interface ConnectionStatus {
@@ -43,12 +48,13 @@ const SubscriberConnectionButton: React.FC<
   onLive,
   onStatusChange,
   compact = false,
+  livePolling = true,
 }) => {
   const [enabled, setEnabled] = useState<boolean>(
     Boolean(subscriber?.connectionEnabled)
   );
 
-  const [online, setOnline] = useState<boolean>(false);
+  const [online, setOnline] = useState<boolean>(Boolean(subscriber?.isOnline));
 
   const [status, setStatus] =
     useState<ConnectionStatus | null>(null);
@@ -130,10 +136,16 @@ const SubscriberConnectionButton: React.FC<
       Boolean(subscriber?.connectionEnabled)
     );
 
-    loadStatus(true);
+    if (livePolling) {
+      loadStatus(true);
+    } else {
+      setOnline(Boolean(subscriber?.isOnline));
+    }
   }, [
     subscriber?.id,
     subscriber?.connectionEnabled,
+    subscriber?.isOnline,
+    livePolling,
   ]);
 
   // ============================================================
@@ -141,7 +153,7 @@ const SubscriberConnectionButton: React.FC<
   // ============================================================
 
   useEffect(() => {
-    if (!subscriber?.id) {
+    if (!subscriber?.id || !livePolling) {
       return;
     }
 
@@ -152,7 +164,7 @@ const SubscriberConnectionButton: React.FC<
     return () => {
       window.clearInterval(timer);
     };
-  }, [subscriber?.id]);
+  }, [subscriber?.id, livePolling]);
 
   // ============================================================
   // OPEN CONFIRMATION

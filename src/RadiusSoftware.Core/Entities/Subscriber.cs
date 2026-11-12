@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace RadiusSoftware.Core.Entities;
@@ -44,6 +44,14 @@ public class Subscriber
 
     public bool ConnectionEnabled { get; set; } = true;
     public bool IsActive { get; set; } = true;
+
+    // Result of the latest RADIUS login attempt (ACCEPT / REJECT) and why it
+    // was rejected (e.g. "Wrong Password.", "Subscriber Account is Expired.")
+    [MaxLength(20)]
+    public string? LastAuthResult { get; set; }
+    [MaxLength(200)]
+    public string? LastAuthReason { get; set; }
+    public DateTime? LastAuthAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

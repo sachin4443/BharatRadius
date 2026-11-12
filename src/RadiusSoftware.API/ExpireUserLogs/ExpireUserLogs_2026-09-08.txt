@@ -1,3 +1,0 @@
-[2026-09-08 22:26:41] Expired Subscriber Service started.
-[2026-09-08 22:26:41] Executing immediate startup check for expired subscribers...
-[2026-09-08 22:26:42] 17 expired subscribers processed, deactivated, and sessions stopped.

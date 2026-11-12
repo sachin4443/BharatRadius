@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using RadiusSoftware.API.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using RadiusSoftware.Core.DTOs;
@@ -9,6 +10,7 @@ using System.Security.Claims;
 namespace RadiusSoftware.API.Controllers;
 
 [Authorize]
+[SiteScoped(ScopedResource.Package, "id")]
 [Route("api/[controller]")]
 [ApiController]
 public class PackagesController : ControllerBase

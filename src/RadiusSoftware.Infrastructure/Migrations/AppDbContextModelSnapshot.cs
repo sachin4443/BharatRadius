@@ -167,6 +167,9 @@ namespace RadiusSoftware.Infrastructure.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("DashboardInterfaces")
+                        .HasColumnType("text");
+
                     b.Property<int>("InterimTime")
                         .HasColumnType("integer");
 
@@ -391,6 +394,72 @@ namespace RadiusSoftware.Infrastructure.Migrations
                     b.ToTable("PasswordResets");
                 });
 
+            modelBuilder.Entity("RadiusSoftware.Core.Entities.PaymentGatewayConfig", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ApiKey")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("ApiSecret")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("CallbackUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsDefault")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("MerchantId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Mode")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("SaltOrWebhookSecret")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<Guid?>("SiteId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "SiteId");
+
+                    b.ToTable("PaymentGatewayConfigs");
+                });
+
             modelBuilder.Entity("RadiusSoftware.Core.Entities.RadiusAccountingSession", b =>
                 {
                     b.Property<Guid>("Id")
@@ -477,6 +546,8 @@ namespace RadiusSoftware.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("SubscriberId", "IsActive");
+
                     b.ToTable("RadiusAccountingSessions");
                 });
 
@@ -525,6 +596,10 @@ namespace RadiusSoftware.Infrastructure.Migrations
                         .HasColumnType("text");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("SubscriberId");
 
                     b.ToTable("RadiusAuthenticationLogs");
                 });
@@ -735,6 +810,155 @@ namespace RadiusSoftware.Infrastructure.Migrations
                     b.ToTable("SiteWallets");
                 });
 
+            modelBuilder.Entity("RadiusSoftware.Core.Entities.SmsGatewayConfig", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ApiKey")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("ApiUrl")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("ContentType")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ExpiredTemplate")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("ExpiredTemplateId")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("HttpMethod")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("OrganizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PostBodyTemplate")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ProviderName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("RechargeTemplate")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("RechargeTemplateId")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<int>("ReminderDaysBefore")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ReminderTemplate")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("ReminderTemplateId")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<bool>("SendExpiryReminder")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("SendOnExpiry")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("SendOnRecharge")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("SenderId")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<Guid?>("SiteId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SuccessKeyword")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "SiteId");
+
+                    b.ToTable("SmsGatewayConfigs");
+                });
+
+            modelBuilder.Entity("RadiusSoftware.Core.Entities.SmsLog", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("Mobile")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("ProviderResponse")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid?>("SiteId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid?>("SubscriberId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("SubscriberId");
+
+                    b.ToTable("SmsLogs");
+                });
+
             modelBuilder.Entity("RadiusSoftware.Core.Entities.Subscriber", b =>
                 {
                     b.Property<Guid>("Id")
@@ -780,6 +1004,17 @@ namespace RadiusSoftware.Infrastructure.Migrations
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("LastAuthAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastAuthReason")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("LastAuthResult")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
 
                     b.Property<string>("MacAddress")
                         .IsRequired()
@@ -842,6 +1077,12 @@ namespace RadiusSoftware.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ExpireDate");
+
+                    b.HasIndex("PPPoEUsername");
+
+                    b.HasIndex("SiteId");
+
                     b.ToTable("Subscribers");
                 });
 
@@ -855,6 +1096,9 @@ namespace RadiusSoftware.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<decimal>("AmountCharged")
+                        .HasColumnType("numeric");
+
                     b.Property<DateTime>("AssignedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -864,8 +1108,17 @@ namespace RadiusSoftware.Infrastructure.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("CreatedByName")
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("CreatedByUserId")
+                        .HasColumnType("uuid");
+
                     b.Property<decimal>("DownloadMbps")
                         .HasColumnType("numeric");
+
+                    b.Property<DateTime?>("EndDate")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<DateTime?>("EndedAt")
                         .HasColumnType("timestamp with time zone");
@@ -883,6 +1136,15 @@ namespace RadiusSoftware.Infrastructure.Migrations
                     b.Property<decimal>("Price")
                         .HasColumnType("numeric");
 
+                    b.Property<int>("Quantity")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("SiteId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("StartDate")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<Guid>("SubscriberId")
                         .HasColumnType("uuid");
 
@@ -893,6 +1155,10 @@ namespace RadiusSoftware.Infrastructure.Migrations
                         .HasColumnType("integer");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("SubscriberId");
+
+                    b.HasIndex("SiteId", "CreatedAt");
 
                     b.ToTable("SubscriberPackageHistories");
                 });
@@ -905,6 +1171,9 @@ namespace RadiusSoftware.Infrastructure.Migrations
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DashboardConfigJson")
+                        .HasColumnType("text");
 
                     b.Property<string>("Email")
                         .IsRequired()

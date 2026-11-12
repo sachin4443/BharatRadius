@@ -5,6 +5,19 @@ import apiClient from "../services/api";
 
 export const MainLayout: React.FC = () => {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+
+  // Phones / small tablets: sidebar becomes a slide-in drawer
+  const [isMobile, setIsMobile] = useState(() => window.matchMedia("(max-width: 991.98px)").matches);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 991.98px)");
+    const onChange = () => {
+      setIsMobile(mq.matches);
+      if (!mq.matches) setMobileMenuOpen(false);
+    };
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
   const [showDropdown, setShowDropdown] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
 
@@ -41,7 +54,14 @@ export const MainLayout: React.FC = () => {
   }, []);
 
   const handleLogout = () => {
+    // Keep only the "Remember Me" login id
+    const remember = localStorage.getItem("rememberLogin");
+    const rememberedUser = localStorage.getItem("rememberedUser");
     localStorage.clear();
+    if (remember === "1" && rememberedUser) {
+      localStorage.setItem("rememberLogin", "1");
+      localStorage.setItem("rememberedUser", rememberedUser);
+    }
     navigate("/");
   };
 
@@ -91,18 +111,40 @@ export const MainLayout: React.FC = () => {
 
   return (
     <div className="d-flex bg-light vh-100 overflow-hidden" id="wrapper">
-      {/* Sidebar - Fixed Height */}
+      {/* Mobile drawer backdrop */}
+      {isMobile && mobileMenuOpen && (
+        <div
+          onClick={() => setMobileMenuOpen(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", zIndex: 1040 }}
+        />
+      )}
+
+      {/* Sidebar - Fixed Height (drawer on mobile) */}
       <div
         className="h-100 flex-shrink-0 bg-white"
-        style={{
-          width: isSidebarCollapsed ? "70px" : "260px",
-          transition: "width 0.3s ease",
-          zIndex: 1000,
-        }}
+        style={
+          isMobile
+            ? {
+                position: "fixed",
+                top: 0,
+                left: 0,
+                bottom: 0,
+                width: "260px",
+                transform: mobileMenuOpen ? "translateX(0)" : "translateX(-100%)",
+                transition: "transform 0.25s ease",
+                zIndex: 1045,
+              }
+            : {
+                width: isSidebarCollapsed ? "70px" : "260px",
+                transition: "width 0.3s ease",
+                zIndex: 1000,
+              }
+        }
       >
         <Sidebar
-          collapsed={isSidebarCollapsed}
+          collapsed={!isMobile && isSidebarCollapsed}
           companyLogo={getFullImageUrl(user?.logoUrl)}
+          onNavigate={() => setMobileMenuOpen(false)}
         />
       </div>
 
@@ -110,7 +152,7 @@ export const MainLayout: React.FC = () => {
       <div className="flex-grow-1 d-flex flex-column h-100 overflow-hidden">
         {/* Top Navbar - Fixed/Sticky */}
         <nav
-          className="navbar navbar-expand navbar-light bg-white border-bottom px-4 shadow-sm flex-shrink-0"
+          className="navbar navbar-expand navbar-light bg-white border-bottom px-2 px-md-4 shadow-sm flex-shrink-0"
           style={{ height: "65px", zIndex: 1010 }}
         >
           <div className="container-fluid px-0">
@@ -130,7 +172,9 @@ export const MainLayout: React.FC = () => {
     onMouseLeave={(e) => {
       e.currentTarget.style.backgroundColor = "#fff7ed";
     }}
-    onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+    onClick={() =>
+      isMobile ? setMobileMenuOpen(!mobileMenuOpen) : setIsSidebarCollapsed(!isSidebarCollapsed)
+    }
     title="Toggle Sidebar"
   >
     ☰
@@ -243,7 +287,7 @@ export const MainLayout: React.FC = () => {
 
         {/* Page Content */}
         <div
-          className="p-4 flex-grow-1 overflow-auto"
+          className="p-2 p-md-4 flex-grow-1 overflow-auto"
           style={{ backgroundColor: "#f8fafc" }}
         >
           <Outlet />

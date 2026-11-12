@@ -1,4 +1,6 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using RadiusSoftware.API.Security;
+using RadiusSoftware.API.Services.Query;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using RadiusSoftware.API.Services;
@@ -10,6 +12,7 @@ using RadiusSoftware.Infrastructure.Data;
 namespace RadiusSoftware.API.Controllers;
 
 [Authorize]
+[SiteScoped(ScopedResource.Subscriber, "id")]
 [Route("api/[controller]")]
 [ApiController]
 public class SubscribersController : ControllerBase
@@ -17,12 +20,18 @@ public class SubscribersController : ControllerBase
     private readonly AppDbContext _context;
     private readonly IMikroTikService _mikroTikService;
     private readonly ISubscriberConnectionService _subscriberConnectionService;
+    private readonly ISiteAccessService _access;
+    private readonly ISubscriberQueryService _subscriberQuery;
 
 
     public SubscribersController(
         AppDbContext context,
-        IMikroTikService mikroTikService, ISubscriberConnectionService subscriberConnectionService)
+        IMikroTikService mikroTikService, ISubscriberConnectionService subscriberConnectionService,
+        ISiteAccessService access,
+        ISubscriberQueryService subscriberQuery)
     {
+        _access = access;
+        _subscriberQuery = subscriberQuery;
         _context = context;
         _mikroTikService = mikroTikService;
         _subscriberConnectionService = subscriberConnectionService;
@@ -56,36 +65,16 @@ public class SubscribersController : ControllerBase
             // USER ID
             // =========================================================
 
-            if (!Guid.TryParse(userIdStr, out var currentUserId))
-            {
-                return Unauthorized(new
-                {
-                    message = "Invalid logged-in user."
-                });
-            }
+            // Own site + all child sites (any depth), or whole organization for org admins
+            var accessibleSiteIds = (await _access.GetAccessibleSiteIdsAsync())?.ToList() ?? new List<Guid>();
 
-           var subscribers = await _context.Subscribers
-            .AsNoTracking()
-            .Where(sub =>
-                _context.Sites.Any(site =>
-                    site.Id == sub.SiteId &&
-                    !site.IsDeleted &&
-                    (
-                        
-                        site.UserId == currentUserId ||
-                        
-                        _context.Sites.Any(parentSite =>
-                            parentSite.Id == site.ParentSiteId &&
-                            parentSite.UserId == currentUserId &&
-                            !parentSite.IsDeleted
-                        )
-                    )
-                )
-            )
-            .OrderByDescending(s => s.CreatedAt)
-            .ToListAsync();
+            var subscribers = await _context.Subscribers
+                .AsNoTracking()
+                .Where(sub => accessibleSiteIds.Contains(sub.SiteId))
+                .OrderByDescending(s => s.CreatedAt)
+                .ToListAsync();
 
-        return Ok(subscribers);
+            return Ok(subscribers);
 
             //var subscribers = await _context.Subscribers
             //    .AsNoTracking()
@@ -110,6 +99,111 @@ public class SubscribersController : ControllerBase
                 innerError = ex.InnerException?.Message
             });
         }
+    }
+
+    // =========================================================
+    // FAST PAGED LIST (server side search / filter / sort)
+    // GET api/Subscribers/paged?page=1&pageSize=25&search=&status=expired
+    // =========================================================
+    [HttpGet("paged")]
+    public async Task<IActionResult> GetSubscribersPaged([FromQuery] SubscriberListFilter filter)
+    {
+        filter.Page = Math.Max(1, filter.Page);
+        filter.PageSize = Math.Clamp(filter.PageSize, 5, 500);
+
+        var rows = await _subscriberQuery.RowsAsync();
+
+        // Status counters for the summary cards (search / site filters applied, status filter not)
+        var counterFilter = new SubscriberListFilter
+        {
+            Search = filter.Search,
+            SiteId = filter.SiteId,
+            NasId = filter.NasId,
+            PackageId = filter.PackageId
+        };
+        var counts = await _subscriberQuery.ApplyFilter(rows, counterFilter)
+            .GroupBy(r => r.Status)
+            .Select(g => new { Status = g.Key, Count = g.Count() })
+            .ToListAsync();
+
+        var filtered = _subscriberQuery.ApplyFilter(rows, filter);
+        var total = await filtered.CountAsync();
+
+        var items = await _subscriberQuery.ApplySort(filtered, filter)
+            .Skip((filter.Page - 1) * filter.PageSize)
+            .Take(filter.PageSize)
+            .ToListAsync();
+
+        int Count(string status) => counts.FirstOrDefault(c => c.Status == status)?.Count ?? 0;
+
+        return Ok(new
+        {
+            items,
+            total,
+            page = filter.Page,
+            pageSize = filter.PageSize,
+            totalPages = (int)Math.Ceiling(total / (double)filter.PageSize),
+            counts = new
+            {
+                total = counts.Sum(c => c.Count),
+                online = Count(SubscriberStatus.Online),
+                active = Count(SubscriberStatus.Active) + Count(SubscriberStatus.Online) + Count(SubscriberStatus.WrongPassword),
+                offline = Count(SubscriberStatus.Active) + Count(SubscriberStatus.WrongPassword),
+                expired = Count(SubscriberStatus.Expired),
+                suspended = Count(SubscriberStatus.Suspended),
+                disabled = Count(SubscriberStatus.Disabled),
+                wrongPassword = Count(SubscriberStatus.WrongPassword)
+            }
+        });
+    }
+
+    // =========================================================
+    // EXPORT CURRENT FILTER AS CSV (opens in Excel)
+    // =========================================================
+    [HttpGet("export")]
+    public async Task<IActionResult> ExportSubscribers([FromQuery] SubscriberListFilter filter)
+    {
+        var rows = _subscriberQuery.ApplySort(
+            _subscriberQuery.ApplyFilter(await _subscriberQuery.RowsAsync(), filter), filter);
+        var items = await rows.Take(100_000).ToListAsync();
+
+        static string Csv(string? v)
+        {
+            v ??= string.Empty;
+            // Prevent spreadsheet formula injection
+            if (v.Length > 0 && "=+-@".Contains(v[0])) v = "'" + v;
+            return "\"" + v.Replace("\"", "\"\"") + "\"";
+        }
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("Username,Full Name,Mobile,Address,City,Site,Package,Price,NAS,Status,Expiry Date (IST),Last Login Result,Created (IST)");
+        foreach (var r in items)
+        {
+            sb.AppendLine(string.Join(",",
+                Csv(r.PPPoEUsername), Csv(r.FullName), Csv(r.Mobile), Csv(r.Address), Csv(r.City),
+                Csv(r.SiteName), Csv(r.PackageName), Csv(r.PackagePrice?.ToString("0.00")), Csv(r.NasName),
+                Csv(r.Status),
+                Csv(r.ExpireDate.HasValue ? IstClock.ToIst(r.ExpireDate.Value).ToString("yyyy-MM-dd HH:mm") : ""),
+                Csv(r.LastAuthReason ?? r.LastAuthResult),
+                Csv(IstClock.ToIst(r.CreatedAt).ToString("yyyy-MM-dd HH:mm"))));
+        }
+
+        var bytes = System.Text.Encoding.UTF8.GetPreamble()
+            .Concat(System.Text.Encoding.UTF8.GetBytes(sb.ToString())).ToArray();
+        return File(bytes, "text/csv", $"subscribers-{DateTime.UtcNow:yyyyMMdd-HHmm}.csv");
+    }
+
+    // =========================================================
+    // CHECK IF A PPPoE USERNAME IS FREE (used by the add form)
+    // =========================================================
+    [HttpGet("check-username")]
+    public async Task<IActionResult> CheckUsername([FromQuery] string username, [FromQuery] Guid? excludeId)
+    {
+        var lower = (username ?? string.Empty).Trim().ToLower();
+        if (lower.Length == 0) return Ok(new { available = false });
+        var exists = await _context.Subscribers.AsNoTracking()
+            .AnyAsync(s => s.PPPoEUsername.ToLower() == lower && (excludeId == null || s.Id != excludeId));
+        return Ok(new { available = !exists });
     }
 
     [HttpGet("{id}")]
@@ -141,13 +235,9 @@ public class SubscribersController : ControllerBase
                     });
                 }
 
-                query = query.Where(s =>
-                    _context.Sites.Any(site =>
-                        site.Id == s.SiteId &&
-                        site.UserId == currentUserId &&
-                        !site.IsDeleted
-                    )
-                );
+                // Own site and all child sites
+                var accessibleSiteIds = (await _access.GetAccessibleSiteIdsAsync())?.ToList() ?? new List<Guid>();
+                query = query.Where(s => accessibleSiteIds.Contains(s.SiteId));
             }
 
             var sub = await query
@@ -256,6 +346,48 @@ public class SubscribersController : ControllerBase
                 siteId = userSite.Id; // Auto-assign login user's site
             }
 
+            // 1b. When editing, keep the subscriber in its own site (a parent
+            //     site may edit subscribers of its child sites)
+            if (model.Id != Guid.Empty)
+            {
+                var currentSiteId = await _context.Subscribers.AsNoTracking()
+                    .Where(s => s.Id == model.Id).Select(s => (Guid?)s.SiteId).FirstOrDefaultAsync();
+                if (currentSiteId == null) return NotFound(new { message = "Subscriber not found." });
+                if (!isSuperAdmin && !await _access.CanAccessSiteAsync(currentSiteId.Value)) return Forbid();
+                siteId = currentSiteId.Value;
+            }
+
+            // 1c. PPPoE username must be unique across the whole system
+            //     (the RADIUS server finds subscribers by username only)
+            var pppoeUsername = (model.PPPoEUsername ?? string.Empty).Trim();
+            model.PPPoEUsername = pppoeUsername;
+            if (!string.IsNullOrEmpty(pppoeUsername))
+            {
+                var lower = pppoeUsername.ToLower();
+                var duplicate = await _context.Subscribers.AsNoTracking()
+                    .AnyAsync(s => s.Id != model.Id && s.PPPoEUsername.ToLower() == lower);
+                if (duplicate)
+                {
+                    return Conflict(new { message = $"PPPoE username '{pppoeUsername}' already exists. Please choose another username." });
+                }
+            }
+            else if (model.Id == Guid.Empty && (model.Service ?? "PPPoE") == "PPPoE")
+            {
+                return BadRequest(new { message = "PPPoE username is required." });
+            }
+
+            // 1d. NAS and package must belong to the subscriber's site
+            if (model.NasId.HasValue &&
+                !await _context.NasDevices.AnyAsync(n => n.Id == model.NasId.Value && n.SiteId == siteId))
+            {
+                return BadRequest(new { message = "Selected NAS does not belong to this site." });
+            }
+            if (model.PackageId.HasValue &&
+                !await _context.PackageProfiles.AnyAsync(p => p.Id == model.PackageId.Value && p.SiteId == siteId))
+            {
+                return BadRequest(new { message = "Selected package does not belong to this site." });
+            }
+
             // 2. CREATE NEW SUBSCRIBER
             if (model.Id == Guid.Empty)
             {
@@ -301,8 +433,6 @@ public class SubscribersController : ControllerBase
                 // 3. UPDATE EXISTING SUBSCRIBER
                 var existingSubscriber = await _context.Subscribers.FirstOrDefaultAsync(s => s.Id == model.Id);
                 if (existingSubscriber == null) return NotFound(new { message = "Subscriber not found." });
-
-                if (!isSuperAdmin && existingSubscriber.SiteId != siteId) return Forbid();
 
                 existingSubscriber.SiteId = siteId; // Ensure SiteId remains locked
                 existingSubscriber.NasId = model.NasId;
@@ -791,7 +921,12 @@ public class SubscribersController : ControllerBase
 
                 IsCurrent = x.IsCurrent,
 
-                Comment = x.Comment
+                Comment = x.Comment,
+                StartDate = x.StartDate ?? x.AssignedAt,
+                EndDate = x.EndDate ?? x.EndedAt,
+                Quantity = x.Quantity < 1 ? 1 : x.Quantity,
+                AmountCharged = x.AmountCharged > 0 ? x.AmountCharged : x.Price,
+                CreatedByName = x.CreatedByName
             })
             .ToListAsync();
 
@@ -923,6 +1058,7 @@ public class SubscribersController : ControllerBase
             await _context.PackageProfiles
                 .FirstOrDefaultAsync(x =>
                     x.Id == request.PackageId &&
+                    x.SiteId == subscriber.SiteId &&
                     x.IsActive);
 
         if (newPackage == null)
@@ -947,7 +1083,9 @@ public class SubscribersController : ControllerBase
         // 3. WALLET BALANCE & DEDUCTION CHECK
         // =========================================================
 
+        // AsNoTracking: the row is read again with a lock inside the transaction
         var wallet = await _context.SiteWallets
+            .AsNoTracking()
             .FirstOrDefaultAsync(w => w.SiteId == site.Id);
 
         if (wallet == null)
@@ -1006,6 +1144,24 @@ public class SubscribersController : ControllerBase
         // =========================================================
         await using var dbTransaction = await _context.Database.BeginTransactionAsync();
 
+        // Lock the wallet row and check the balance again inside the transaction
+        // (prevents double deduction on double click / parallel requests)
+        var lockedSiteId = site.Id;
+        wallet = await _context.SiteWallets
+            .FromSqlInterpolated($@"SELECT * FROM ""SiteWallets"" WHERE ""SiteId"" = {lockedSiteId} FOR UPDATE")
+            .FirstAsync();
+        if (wallet.Balance < packagePrice)
+        {
+            await dbTransaction.RollbackAsync();
+            return BadRequest(new
+            {
+                success = false,
+                message = "Insufficient wallet balance to change/assign package.",
+                requiredAmount = packagePrice,
+                availableBalance = wallet.Balance
+            });
+        }
+
         try
         {
             // =========================================================
@@ -1030,7 +1186,6 @@ public class SubscribersController : ControllerBase
             {
                 history.IsCurrent = false;
                 history.EndedAt = DateTime.UtcNow;
-                history.Action = "CHANGED";
             }
 
             // =========================================================

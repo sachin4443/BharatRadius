@@ -36,7 +36,13 @@ export const LiveRadiusTerminal: React.FC = () => {
   console.log("SignalR Hub URL:", hubUrl);
 
   const connection = new signalR.HubConnectionBuilder()
-    .withUrl(hubUrl)
+    .withUrl(hubUrl, {
+      accessTokenFactory: () =>
+        localStorage.getItem("token") ||
+        localStorage.getItem("accessToken") ||
+        localStorage.getItem("jwtToken") ||
+        "",
+    })
     .withAutomaticReconnect([0, 2000, 5000, 10000])
     .configureLogging(signalR.LogLevel.Information)
     .build();

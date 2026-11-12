@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace RadiusSoftware.Core.Entities;
@@ -59,6 +59,9 @@ public class NasDevice
     public DateTime? RadiusLastVerifiedAt { get; set; }
 
     // Audit
+    /// <summary>Comma separated MikroTik interface names shown as graphs on the dashboard.</summary>
+    public string? DashboardInterfaces { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

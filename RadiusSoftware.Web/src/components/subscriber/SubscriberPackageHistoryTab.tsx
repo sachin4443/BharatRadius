@@ -23,6 +23,13 @@ interface PackageHistory {
   assignedAt: string;
   endedAt?: string;
 
+  // recharge period
+  startDate?: string;
+  endDate?: string;
+  quantity?: number;
+  amountCharged?: number;
+  createdByName?: string;
+
   isCurrent: boolean;
 
   comment?: string;
@@ -635,13 +642,17 @@ const PackageHistoryRow = ({
         <div className="col-lg-2">
 
           <div className="text-muted small">
-            Assigned
+            Start → End
           </div>
-
           <div className="small fw-semibold">
-            {formatDate(
-              item.assignedAt,
-            )}
+            {formatDate(item.startDate || item.assignedAt)}
+            <span className="text-muted"> → </span>
+            {formatDate(item.endDate || item.endedAt)}
+          </div>
+          <div className="text-muted" style={{ fontSize: 11 }}>
+            ₹{Number(item.amountCharged ?? item.price ?? 0).toFixed(2)}
+            {item.quantity && item.quantity > 1 ? ` • ×${item.quantity}` : ""}
+            {item.createdByName ? ` • by ${item.createdByName}` : ""}
           </div>
 
         </div>

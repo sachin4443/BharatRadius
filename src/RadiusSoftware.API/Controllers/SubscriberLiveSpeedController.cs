@@ -1,10 +1,12 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using RadiusSoftware.API.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using RadiusSoftware.API.Services.SubscriberLiveSpeed;
 
 namespace RadiusSoftware.API.Controllers;
 
 [Authorize]
+[SiteScoped(ScopedResource.Subscriber, "subscriberId")]
 [ApiController]
 [Route("api/subscriber-live-speed")]
 public class SubscriberLiveSpeedController : ControllerBase

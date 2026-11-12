@@ -5,6 +5,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { API_BASE_URL } from "../../services/api";
 
 interface SubscriberLiveSessionProps {
   subscriber: any;
@@ -38,7 +39,7 @@ interface LiveSpeedResponse {
   acctSessionId?: string | null;
 }
 
-const API_BASE_URL = "https://api.bharatradius.com/api";
+
 
 const SubscriberLiveSession: React.FC<
   SubscriberLiveSessionProps

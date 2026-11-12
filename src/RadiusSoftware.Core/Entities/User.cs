@@ -1,4 +1,4 @@
-﻿namespace RadiusSoftware.Core.Entities;
+namespace RadiusSoftware.Core.Entities;
 
 public class User
 {
@@ -10,11 +10,15 @@ public class User
     public string Username { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;
     public string Mobile { get; set; } = string.Empty;
+    [System.Text.Json.Serialization.JsonIgnore]
     public string PasswordHash { get; set; } = string.Empty;
 
     public bool IsSuperAdmin { get; set; } = false;
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>JSON list of dashboard widgets this user wants to see.</summary>
+    public string? DashboardConfigJson { get; set; }
 
     // 👇 YEH NAYI PROPERTIES ADD KARNI HAIN 👇
     public Guid? RoleId { get; set; }

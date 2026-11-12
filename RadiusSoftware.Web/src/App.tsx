@@ -20,6 +20,9 @@ import SubscriberProfile from "./pages/SubscriberProfile";
 import WalletChildSites from "./pages/WalletChildSites";
 import WalletTransactions from "./pages/WalletTransactions";
 import CAF from "./pages/CAF";
+import Reports from "./pages/Reports";
+import RadiusAuthLogs from "./pages/RadiusAuthLogs";
+import GatewaySettings from "./pages/GatewaySettings";
 export const App: React.FC = () => {
   return (
     <Router>
@@ -77,6 +80,11 @@ export const App: React.FC = () => {
             path="/networking/nas"
             element={<NasManagement />}
           />
+
+          {/* Reports & tools */}
+          <Route path="/reports" element={<Reports />} />
+          <Route path="/radius-auth-logs" element={<RadiusAuthLogs />} />
+          <Route path="/gateway-settings" element={<GatewaySettings />} />
 
           {/* Package Management */}
           <Route

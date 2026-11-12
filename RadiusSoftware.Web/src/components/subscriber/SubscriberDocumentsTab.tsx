@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import apiClient from "../../services/api";
+import { openCafPdf } from "../../services/openCafPdf";
 
 interface CAFDocument {
   id?: string;
@@ -81,15 +82,16 @@ const SubscriberDocumentsTab: React.FC<{ subscriberId: string }> = ({ subscriber
     }
   };
 
-  const handleOpenCafPdf = (pdfPath?: string | null) => {
-    if (!pdfPath) {
-      alert("CAF PDF path is not available.");
+  const handleOpenCafPdf = async (cafId?: string | null) => {
+    if (!cafId) {
+      alert("CAF PDF is not available.");
       return;
     }
-    const baseUrl = apiClient.defaults.baseURL || "";
-    const serverUrl = baseUrl.replace(/\/api\/?$/, "");
-    const pdfUrl = `${serverUrl}${pdfPath}`;
-    window.open(pdfUrl, "_blank", "noopener,noreferrer");
+    try {
+      await openCafPdf(cafId);
+    } catch {
+      alert("Unable to open CAF PDF.");
+    }
   };
 
   const formatDate = (value?: string | null) => {
@@ -239,7 +241,7 @@ const SubscriberDocumentsTab: React.FC<{ subscriberId: string }> = ({ subscriber
                     <button
                       type="button"
                       className="btn btn-sm btn-outline-primary rounded-pill px-3 shadow-sm"
-                      onClick={() => handleOpenCafPdf(caf.pdfPath)}
+                      onClick={() => handleOpenCafPdf(caf.id)}
                     >
                       <i className="bi bi-file-earmark-pdf-fill me-1" /> Open PDF
                     </button>
