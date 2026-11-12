@@ -115,6 +115,7 @@ if (!builder.Environment.IsDevelopment())
 }
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<RadiusSoftware.API.Security.ISiteAccessService, RadiusSoftware.API.Security.SiteAccessService>();
+builder.Services.AddScoped<RadiusSoftware.API.Services.Query.ISubscriberQueryService, RadiusSoftware.API.Services.Query.SubscriberQueryService>();
 builder.Services.AddScoped<IMikroTikService, MikroTikService>();
 builder.Services.AddScoped<ISubscriberConnectionService, SubscriberConnectionService>();
 builder.Services.AddScoped<
@@ -124,6 +125,9 @@ builder.Services.AddHostedService<ExpiredSubscriberService>();
 builder.Services.AddMemoryCache();
 builder.Services.AddHostedService<AutoConfigureNasService>();
 builder.Services.AddScoped<IEmailService, EmailService>();
+builder.Services.AddHttpClient("sms", c => c.Timeout = TimeSpan.FromSeconds(20));
+builder.Services.AddScoped<RadiusSoftware.API.Services.Sms.ISmsService, RadiusSoftware.API.Services.Sms.SmsService>();
+builder.Services.AddHostedService<RadiusSoftware.API.Services.Sms.SmsReminderService>();
 var app = builder.Build();
 
 // Program.cs me (DbContext ya Controllers register hone se pehle)

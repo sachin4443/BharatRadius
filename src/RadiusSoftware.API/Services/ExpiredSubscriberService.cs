@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.EntityFrameworkCore;
@@ -44,83 +44,81 @@ public class ExpiredSubscriberService : BackgroundService
     {
         using var scope = _scopeFactory.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var mikroTik = scope.ServiceProvider.GetRequiredService<RadiusSoftware.API.Services.MikroTik.IMikroTikService>();
 
-        var indiaTimeZone = TimeZoneInfo.FindSystemTimeZoneById(
-            OperatingSystem.IsWindows() ? "India Standard Time" : "Asia/Kolkata"
-        );
+        var utcNow = DateTime.UtcNow;
 
-        var nowIndia = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, indiaTimeZone);
-        var todayLocalMidnight = nowIndia.Date;
+        // Subscribers whose expiry time has passed and that still have a
+        // "current" package or a live session. The account itself is NOT
+        // switched off any more: the RADIUS server rejects expired users by
+        // date, so a recharge immediately brings them back online and
+        // "Suspended"/"Disabled" keep meaning a manual action only.
+        var expiredSubscribers = await context.Subscribers
+            .Where(s =>
+                s.ExpireDate.HasValue &&
+                s.ExpireDate.Value <= utcNow &&
+                (context.SubscriberPackageHistories.Any(h => h.SubscriberId == s.Id && h.IsCurrent) ||
+                 context.RadiusAccountingSessions.Any(r => r.SubscriberId == s.Id && r.IsActive)))
+            .ToListAsync(stoppingToken);
 
-        // Convert India local midnight to strict UTC DateTime with Utc kind for PostgreSQL compatibility
-        var todayUtc = DateTime.SpecifyKind(
-            TimeZoneInfo.ConvertTimeToUtc(todayLocalMidnight, indiaTimeZone),
-            DateTimeKind.Utc
-        );
+        if (expiredSubscribers.Count == 0)
+        {
+            _logger.LogDebug("No newly expired subscribers found.");
+            return;
+        }
 
-        // Find all expired subscribers
-        var expiredSubscribers =
-            await context.Subscribers
-                .Where(s =>
-                    s.ExpireDate.HasValue &&
-                    s.ExpireDate.Value < todayUtc &&
-                    (s.ConnectionEnabled || s.IsActive)
-                )
+        var nasIds = expiredSubscribers.Where(s => s.NasId.HasValue).Select(s => s.NasId!.Value).Distinct().ToList();
+        var nasById = await context.NasDevices.AsNoTracking()
+            .Where(n => nasIds.Contains(n.Id))
+            .ToDictionaryAsync(n => n.Id, stoppingToken);
+
+        int disconnected = 0;
+
+        foreach (var subscriber in expiredSubscribers)
+        {
+            // 1. Close current package history
+            var currentHistories = await context.SubscriberPackageHistories
+                .Where(h => h.SubscriberId == subscriber.Id && h.IsCurrent)
                 .ToListAsync(stoppingToken);
 
-        if (expiredSubscribers.Count > 0)
-        {
-            var utcNow = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Utc);
-
-            foreach (var subscriber in expiredSubscribers)
+            foreach (var history in currentHistories)
             {
-                // 1. Disable Subscriber Account & Connection
-                subscriber.ConnectionEnabled = false;
-                subscriber.IsActive = false;
-                subscriber.UpdatedAt = utcNow;
+                history.IsCurrent = false;
+                history.EndedAt = subscriber.ExpireDate;
+                // Action is kept as it was (ASSIGNED / RENEWED / CHANGED) so that
+                // recharge reports stay correct; only the period is closed.
+            }
 
-                // 2. Expire Current Package History
-                var currentHistories = await context.SubscriberPackageHistories
-                    .Where(h => h.SubscriberId == subscriber.Id && h.IsCurrent)
-                    .ToListAsync(stoppingToken);
+            // 2. Kick the live PPPoE session off the router. The accounting
+            //    STOP sent by the router then closes the session in the DB.
+            var hasLiveSession = await context.RadiusAccountingSessions
+                .AnyAsync(r => r.SubscriberId == subscriber.Id && r.IsActive, stoppingToken);
 
-                foreach (var history in currentHistories)
+            if (hasLiveSession &&
+                subscriber.NasId.HasValue &&
+                nasById.TryGetValue(subscriber.NasId.Value, out var nas) &&
+                !string.IsNullOrWhiteSpace(subscriber.PPPoEUsername))
+            {
+                try
                 {
-                    history.IsCurrent = false;
-                    history.EndedAt = utcNow;
-                    history.Action = "EXPIRED";
-                    if (string.IsNullOrWhiteSpace(history.Comment))
-                    {
-                        history.Comment = "Package expired automatically.";
-                    }
+                    var result = await mikroTik.DisconnectPppSessionAsync(
+                        nas.NasIpAddress, nas.ApiPort, nas.ApiUsername, nas.ApiPassword, subscriber.PPPoEUsername);
+                    if (result.Success) disconnected++;
                 }
-
-                // 3. Stop Active Radius Accounting Sessions
-                var activeSessions = await context.RadiusAccountingSessions
-                    .Where(r => r.SubscriberId == subscriber.Id && r.IsActive)
-                    .ToListAsync(stoppingToken);
-
-                foreach (var session in activeSessions)
+                catch (Exception ex)
                 {
-                    session.IsActive = false;
-                    session.StopTime = utcNow;
-                    session.UpdatedAt = utcNow;
-                    session.TerminateCause = "SubscriberExpired";
+                    _logger.LogWarning(ex, "Could not disconnect expired subscriber {Username}", subscriber.PPPoEUsername);
                 }
             }
 
-            await context.SaveChangesAsync(stoppingToken);
+            subscriber.UpdatedAt = utcNow;
+        }
 
-            string logMsg = $"{expiredSubscribers.Count} expired subscribers processed, deactivated, and sessions stopped.";
-            _logger.LogInformation("{LogMsg}", logMsg);
-            WriteLogToFile(logMsg);
-        }
-        else
-        {
-            string logMsg = "No expired subscribers found.";
-            _logger.LogInformation("{LogMsg}", logMsg);
-            WriteLogToFile(logMsg);
-        }
+        await context.SaveChangesAsync(stoppingToken);
+
+        string logMsg = $"{expiredSubscribers.Count} expired subscribers processed, {disconnected} live sessions disconnected.";
+        _logger.LogInformation("{LogMsg}", logMsg);
+        WriteLogToFile(logMsg);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -128,48 +126,20 @@ public class ExpiredSubscriberService : BackgroundService
         _logger.LogInformation("Expired Subscriber Service started.");
         WriteLogToFile("Expired Subscriber Service started.");
 
-        // Run immediately on startup
+        // Wait a little so the app and DB are ready, then check every 5 minutes
         try
         {
-            WriteLogToFile("Executing immediate startup check for expired subscribers...");
-            await ProcessExpiredSubscribersAsync(stoppingToken);
+            await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
         }
-        catch (Exception ex)
+        catch (OperationCanceledException)
         {
-            _logger.LogError(ex, "Error during startup expired subscriber check.");
-            WriteLogToFile($"STARTUP ERROR: {ex.Message} | StackTrace: {ex.StackTrace}");
+            return;
         }
 
-        // Daily Recurring Loop at 00:01 AM
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                var indiaTimeZone =
-                    TimeZoneInfo.FindSystemTimeZoneById(
-                        OperatingSystem.IsWindows()
-                            ? "India Standard Time"
-                            : "Asia/Kolkata"
-                    );
-
-                var nowIndia =
-                    TimeZoneInfo.ConvertTimeFromUtc(
-                        DateTime.UtcNow,
-                        indiaTimeZone
-                    );
-
-                var nextRun = nowIndia.Date.AddDays(1).AddMinutes(1);
-                var delay = nextRun - nowIndia;
-
-                _logger.LogInformation(
-                    "Expired Subscriber Service next run: {NextRun}",
-                    nextRun);
-
-                await Task.Delay(delay, stoppingToken);
-
-                if (stoppingToken.IsCancellationRequested)
-                    break;
-
                 await ProcessExpiredSubscribersAsync(stoppingToken);
             }
             catch (OperationCanceledException)
@@ -178,16 +148,17 @@ public class ExpiredSubscriberService : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(
-                    ex,
-                    "Error while processing expired subscribers in loop.");
+                _logger.LogError(ex, "Error while processing expired subscribers.");
+                WriteLogToFile($"ERROR: {ex.Message}");
+            }
 
-                WriteLogToFile($"ERROR: {ex.Message} | StackTrace: {ex.StackTrace}");
-
-                await Task.Delay(
-                    TimeSpan.FromMinutes(1),
-                    stoppingToken
-                );
+            try
+            {
+                await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
             }
         }
 

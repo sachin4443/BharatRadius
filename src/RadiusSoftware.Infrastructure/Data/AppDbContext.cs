@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using RadiusSoftware.Core.Entities;
 
 namespace RadiusSoftware.Infrastructure.Data;
@@ -26,6 +26,9 @@ public class AppDbContext : DbContext
     public DbSet<EmailLog> EmailLogs { get; set; }
     public DbSet<CAFDocument> CAFDocuments { get; set; }
     public DbSet<WalletTransaction> WalletTransactions { get; set; }
+    public DbSet<SmsGatewayConfig> SmsGatewayConfigs => Set<SmsGatewayConfig>();
+    public DbSet<SmsLog> SmsLogs => Set<SmsLog>();
+    public DbSet<PaymentGatewayConfig> PaymentGatewayConfigs => Set<PaymentGatewayConfig>();
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -70,5 +73,22 @@ public class AppDbContext : DbContext
             .WithMany()
             .HasForeignKey(x => x.SubscriberId)
             .OnDelete(DeleteBehavior.SetNull);
+
+        // ---- Indexes for fast subscriber list / dashboard / reports ----
+        modelBuilder.Entity<Subscriber>().HasIndex(x => x.SiteId);
+        modelBuilder.Entity<Subscriber>().HasIndex(x => x.ExpireDate);
+        modelBuilder.Entity<Subscriber>().HasIndex(x => x.PPPoEUsername);
+
+        modelBuilder.Entity<RadiusAccountingSession>().HasIndex(x => new { x.SubscriberId, x.IsActive });
+        modelBuilder.Entity<RadiusAuthenticationLog>().HasIndex(x => x.CreatedAt);
+        modelBuilder.Entity<RadiusAuthenticationLog>().HasIndex(x => x.SubscriberId);
+
+        modelBuilder.Entity<SubscriberPackageHistory>().HasIndex(x => x.SubscriberId);
+        modelBuilder.Entity<SubscriberPackageHistory>().HasIndex(x => new { x.SiteId, x.CreatedAt });
+
+        modelBuilder.Entity<SmsGatewayConfig>().HasIndex(x => new { x.OrganizationId, x.SiteId });
+        modelBuilder.Entity<SmsLog>().HasIndex(x => x.CreatedAt);
+        modelBuilder.Entity<SmsLog>().HasIndex(x => x.SubscriberId);
+        modelBuilder.Entity<PaymentGatewayConfig>().HasIndex(x => new { x.OrganizationId, x.SiteId });
     }
 }

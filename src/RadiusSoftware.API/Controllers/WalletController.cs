@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using RadiusSoftware.Core.DTOs;
@@ -200,8 +200,11 @@ namespace RadiusSoftware.API.Controllers
                 }
 
                 // 1. Parent Wallet (Agar nahi hai toh automatic create ho jayega)
+                // Row lock so parallel transfers cannot corrupt the balance
+                var parentSiteIdForLock = parentSite.Id;
                 var parentWallet = await _context.SiteWallets
-                    .FirstOrDefaultAsync(w => w.SiteId == parentSite.Id);
+                    .FromSqlInterpolated($@"SELECT * FROM ""SiteWallets"" WHERE ""SiteId"" = {parentSiteIdForLock} FOR UPDATE")
+                    .FirstOrDefaultAsync();
 
                 if (parentWallet == null)
                 {
@@ -218,8 +221,11 @@ namespace RadiusSoftware.API.Controllers
                 }
 
                 // 2. Child Wallet (Agar nahi hai toh automatic create ho jayega)
+                // Row lock so parallel transfers cannot corrupt the balance
+                var childSiteIdForLock = childSite.Id;
                 var childWallet = await _context.SiteWallets
-                    .FirstOrDefaultAsync(w => w.SiteId == childSite.Id);
+                    .FromSqlInterpolated($@"SELECT * FROM ""SiteWallets"" WHERE ""SiteId"" = {childSiteIdForLock} FOR UPDATE")
+                    .FirstOrDefaultAsync();
 
                 if (childWallet == null)
                 {

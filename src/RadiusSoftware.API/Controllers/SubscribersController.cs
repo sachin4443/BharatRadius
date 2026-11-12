@@ -1,4 +1,5 @@
 using RadiusSoftware.API.Security;
+using RadiusSoftware.API.Services.Query;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -20,14 +21,17 @@ public class SubscribersController : ControllerBase
     private readonly IMikroTikService _mikroTikService;
     private readonly ISubscriberConnectionService _subscriberConnectionService;
     private readonly ISiteAccessService _access;
+    private readonly ISubscriberQueryService _subscriberQuery;
 
 
     public SubscribersController(
         AppDbContext context,
         IMikroTikService mikroTikService, ISubscriberConnectionService subscriberConnectionService,
-        ISiteAccessService access)
+        ISiteAccessService access,
+        ISubscriberQueryService subscriberQuery)
     {
         _access = access;
+        _subscriberQuery = subscriberQuery;
         _context = context;
         _mikroTikService = mikroTikService;
         _subscriberConnectionService = subscriberConnectionService;
@@ -61,36 +65,16 @@ public class SubscribersController : ControllerBase
             // USER ID
             // =========================================================
 
-            if (!Guid.TryParse(userIdStr, out var currentUserId))
-            {
-                return Unauthorized(new
-                {
-                    message = "Invalid logged-in user."
-                });
-            }
+            // Own site + all child sites (any depth), or whole organization for org admins
+            var accessibleSiteIds = (await _access.GetAccessibleSiteIdsAsync())?.ToList() ?? new List<Guid>();
 
-           var subscribers = await _context.Subscribers
-            .AsNoTracking()
-            .Where(sub =>
-                _context.Sites.Any(site =>
-                    site.Id == sub.SiteId &&
-                    !site.IsDeleted &&
-                    (
-                        
-                        site.UserId == currentUserId ||
-                        
-                        _context.Sites.Any(parentSite =>
-                            parentSite.Id == site.ParentSiteId &&
-                            parentSite.UserId == currentUserId &&
-                            !parentSite.IsDeleted
-                        )
-                    )
-                )
-            )
-            .OrderByDescending(s => s.CreatedAt)
-            .ToListAsync();
+            var subscribers = await _context.Subscribers
+                .AsNoTracking()
+                .Where(sub => accessibleSiteIds.Contains(sub.SiteId))
+                .OrderByDescending(s => s.CreatedAt)
+                .ToListAsync();
 
-        return Ok(subscribers);
+            return Ok(subscribers);
 
             //var subscribers = await _context.Subscribers
             //    .AsNoTracking()
@@ -115,6 +99,111 @@ public class SubscribersController : ControllerBase
                 innerError = ex.InnerException?.Message
             });
         }
+    }
+
+    // =========================================================
+    // FAST PAGED LIST (server side search / filter / sort)
+    // GET api/Subscribers/paged?page=1&pageSize=25&search=&status=expired
+    // =========================================================
+    [HttpGet("paged")]
+    public async Task<IActionResult> GetSubscribersPaged([FromQuery] SubscriberListFilter filter)
+    {
+        filter.Page = Math.Max(1, filter.Page);
+        filter.PageSize = Math.Clamp(filter.PageSize, 5, 500);
+
+        var rows = await _subscriberQuery.RowsAsync();
+
+        // Status counters for the summary cards (search / site filters applied, status filter not)
+        var counterFilter = new SubscriberListFilter
+        {
+            Search = filter.Search,
+            SiteId = filter.SiteId,
+            NasId = filter.NasId,
+            PackageId = filter.PackageId
+        };
+        var counts = await _subscriberQuery.ApplyFilter(rows, counterFilter)
+            .GroupBy(r => r.Status)
+            .Select(g => new { Status = g.Key, Count = g.Count() })
+            .ToListAsync();
+
+        var filtered = _subscriberQuery.ApplyFilter(rows, filter);
+        var total = await filtered.CountAsync();
+
+        var items = await _subscriberQuery.ApplySort(filtered, filter)
+            .Skip((filter.Page - 1) * filter.PageSize)
+            .Take(filter.PageSize)
+            .ToListAsync();
+
+        int Count(string status) => counts.FirstOrDefault(c => c.Status == status)?.Count ?? 0;
+
+        return Ok(new
+        {
+            items,
+            total,
+            page = filter.Page,
+            pageSize = filter.PageSize,
+            totalPages = (int)Math.Ceiling(total / (double)filter.PageSize),
+            counts = new
+            {
+                total = counts.Sum(c => c.Count),
+                online = Count(SubscriberStatus.Online),
+                active = Count(SubscriberStatus.Active) + Count(SubscriberStatus.Online) + Count(SubscriberStatus.WrongPassword),
+                offline = Count(SubscriberStatus.Active) + Count(SubscriberStatus.WrongPassword),
+                expired = Count(SubscriberStatus.Expired),
+                suspended = Count(SubscriberStatus.Suspended),
+                disabled = Count(SubscriberStatus.Disabled),
+                wrongPassword = Count(SubscriberStatus.WrongPassword)
+            }
+        });
+    }
+
+    // =========================================================
+    // EXPORT CURRENT FILTER AS CSV (opens in Excel)
+    // =========================================================
+    [HttpGet("export")]
+    public async Task<IActionResult> ExportSubscribers([FromQuery] SubscriberListFilter filter)
+    {
+        var rows = _subscriberQuery.ApplySort(
+            _subscriberQuery.ApplyFilter(await _subscriberQuery.RowsAsync(), filter), filter);
+        var items = await rows.Take(100_000).ToListAsync();
+
+        static string Csv(string? v)
+        {
+            v ??= string.Empty;
+            // Prevent spreadsheet formula injection
+            if (v.Length > 0 && "=+-@".Contains(v[0])) v = "'" + v;
+            return "\"" + v.Replace("\"", "\"\"") + "\"";
+        }
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("Username,Full Name,Mobile,Address,City,Site,Package,Price,NAS,Status,Expiry Date (IST),Last Login Result,Created (IST)");
+        foreach (var r in items)
+        {
+            sb.AppendLine(string.Join(",",
+                Csv(r.PPPoEUsername), Csv(r.FullName), Csv(r.Mobile), Csv(r.Address), Csv(r.City),
+                Csv(r.SiteName), Csv(r.PackageName), Csv(r.PackagePrice?.ToString("0.00")), Csv(r.NasName),
+                Csv(r.Status),
+                Csv(r.ExpireDate.HasValue ? IstClock.ToIst(r.ExpireDate.Value).ToString("yyyy-MM-dd HH:mm") : ""),
+                Csv(r.LastAuthReason ?? r.LastAuthResult),
+                Csv(IstClock.ToIst(r.CreatedAt).ToString("yyyy-MM-dd HH:mm"))));
+        }
+
+        var bytes = System.Text.Encoding.UTF8.GetPreamble()
+            .Concat(System.Text.Encoding.UTF8.GetBytes(sb.ToString())).ToArray();
+        return File(bytes, "text/csv", $"subscribers-{DateTime.UtcNow:yyyyMMdd-HHmm}.csv");
+    }
+
+    // =========================================================
+    // CHECK IF A PPPoE USERNAME IS FREE (used by the add form)
+    // =========================================================
+    [HttpGet("check-username")]
+    public async Task<IActionResult> CheckUsername([FromQuery] string username, [FromQuery] Guid? excludeId)
+    {
+        var lower = (username ?? string.Empty).Trim().ToLower();
+        if (lower.Length == 0) return Ok(new { available = false });
+        var exists = await _context.Subscribers.AsNoTracking()
+            .AnyAsync(s => s.PPPoEUsername.ToLower() == lower && (excludeId == null || s.Id != excludeId));
+        return Ok(new { available = !exists });
     }
 
     [HttpGet("{id}")]
@@ -146,13 +235,9 @@ public class SubscribersController : ControllerBase
                     });
                 }
 
-                query = query.Where(s =>
-                    _context.Sites.Any(site =>
-                        site.Id == s.SiteId &&
-                        site.UserId == currentUserId &&
-                        !site.IsDeleted
-                    )
-                );
+                // Own site and all child sites
+                var accessibleSiteIds = (await _access.GetAccessibleSiteIdsAsync())?.ToList() ?? new List<Guid>();
+                query = query.Where(s => accessibleSiteIds.Contains(s.SiteId));
             }
 
             var sub = await query
@@ -968,6 +1053,7 @@ public class SubscribersController : ControllerBase
             await _context.PackageProfiles
                 .FirstOrDefaultAsync(x =>
                     x.Id == request.PackageId &&
+                    x.SiteId == subscriber.SiteId &&
                     x.IsActive);
 
         if (newPackage == null)
@@ -1075,7 +1161,6 @@ public class SubscribersController : ControllerBase
             {
                 history.IsCurrent = false;
                 history.EndedAt = DateTime.UtcNow;
-                history.Action = "CHANGED";
             }
 
             // =========================================================

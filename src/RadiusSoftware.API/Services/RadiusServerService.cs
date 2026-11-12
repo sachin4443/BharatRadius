@@ -32,6 +32,7 @@ public class RadiusServerService : BackgroundService
     private const byte FramedProtocol = 7;
     private const byte FramedIpAddress = 8;
     private const byte ReplyMessage = 18;
+    private const byte SessionTimeout = 27;
     private const byte ProxyState = 33;
 
     // Accounting
@@ -546,7 +547,7 @@ public class RadiusServerService : BackgroundService
                 nas,
                 username,
                 "REJECT",
-                "Subscriber account is inactive.",
+                "Subscriber is Suspended.",
                 callingStationId,
                 framedIp,
                 acctSessionId,
@@ -556,7 +557,7 @@ public class RadiusServerService : BackgroundService
             await db.SaveChangesAsync();
 
             await LogAndBroadcast(
-                $"Access-Reject: {username} account inactive.",
+                $"Access-Reject: {username} is suspended.",
                 "ERROR");
 
             await SendAccessRejectAsync(
@@ -565,7 +566,7 @@ public class RadiusServerService : BackgroundService
                 requestAuthenticator,
                 attributes,
                 nas.SharedSecret,
-                "Subscriber account is inactive.",
+                "Subscriber is Suspended.",
                 hasMessageAuthenticator,
                 remoteEndpoint,
                 listener);
@@ -585,7 +586,7 @@ public class RadiusServerService : BackgroundService
                 nas,
                 username,
                 "REJECT",
-                "Subscriber connection is disabled.",
+                "Subscriber is Disabled.",
                 callingStationId,
                 framedIp,
                 acctSessionId,
@@ -604,7 +605,47 @@ public class RadiusServerService : BackgroundService
                 requestAuthenticator,
                 attributes,
                 nas.SharedSecret,
-                "Subscriber connection is disabled.",
+                "Subscriber is Disabled.",
+                hasMessageAuthenticator,
+                remoteEndpoint,
+                listener);
+
+            return;
+        }
+
+        // -----------------------------------------------------
+        // 9b. EXPIRY DATE
+        // -----------------------------------------------------
+
+        if (subscriber.ExpireDate.HasValue &&
+            subscriber.ExpireDate.Value <= DateTime.UtcNow)
+        {
+            await RecordAuthenticationLogAsync(
+                db,
+                subscriber,
+                nas,
+                username,
+                "REJECT",
+                "Subscriber Account is Expired.",
+                callingStationId,
+                framedIp,
+                acctSessionId,
+                requestAuthenticator,
+                "ACCOUNT_EXPIRED");
+
+            await db.SaveChangesAsync();
+
+            await LogAndBroadcast(
+                $"Access-Reject: {username} account expired on {subscriber.ExpireDate.Value:yyyy-MM-dd HH:mm}.",
+                "ERROR");
+
+            await SendAccessRejectAsync(
+                requestPacket,
+                identifier,
+                requestAuthenticator,
+                attributes,
+                nas.SharedSecret,
+                "Your account has expired. Please recharge.",
                 hasMessageAuthenticator,
                 remoteEndpoint,
                 listener);
@@ -789,7 +830,7 @@ public class RadiusServerService : BackgroundService
                 nas,
                 username,
                 "REJECT",
-                "Invalid PPPoE username or password.",
+                "Wrong Password.",
                 callingStationId,
                 framedIp,
                 acctSessionId,
@@ -939,6 +980,20 @@ public class RadiusServerService : BackgroundService
             responseAttributes.Add(
                 CreateMikroTikRateLimitAttribute(
                     rateLimit));
+        }
+
+        // Session-Timeout: router disconnects the user exactly when the
+        // package expires (the user then gets "expired" on reconnect).
+        if (subscriber.ExpireDate.HasValue)
+        {
+            var secondsLeft = (subscriber.ExpireDate.Value - DateTime.UtcNow).TotalSeconds;
+            if (secondsLeft > 0 && secondsLeft < uint.MaxValue)
+            {
+                responseAttributes.Add(
+                    CreateUInt32Attribute(
+                        SessionTimeout,
+                        (uint)Math.Ceiling(secondsLeft)));
+            }
         }
 
         // Interim Accounting
@@ -1668,6 +1723,15 @@ public class RadiusServerService : BackgroundService
             };
 
         db.RadiusAuthenticationLogs.Add(log);
+
+        // Keep the latest result on the subscriber so the subscriber list can
+        // show "Wrong Password", "Expired" etc. without scanning the log table.
+        if (subscriber != null)
+        {
+            subscriber.LastAuthResult = result;
+            subscriber.LastAuthReason = failureReason;
+            subscriber.LastAuthAt = DateTime.UtcNow;
+        }
 
         await Task.CompletedTask;
     }

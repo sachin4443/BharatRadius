@@ -409,8 +409,148 @@ public class NasController : ControllerBase
             return BadRequest(new { success = false, message = "Connection error or timeout" });
         }
     }
+    // =========================================================
+    // MIKROTIK INTERFACES (for the graph interface dropdown)
+    // GET api/Nas/interfaces/{id}
+    // =========================================================
+    [HttpGet("interfaces/{id}")]
+    public async Task<IActionResult> GetInterfaces(Guid id)
+    {
+        var nas = await _context.NasDevices.AsNoTracking().FirstOrDefaultAsync(n => n.Id == id);
+        if (nas == null) return NotFound(new { message = "NAS not found" });
+
+        try
+        {
+            var list = await Task.Run(() =>
+            {
+                using var connection = ConnectionFactory.CreateConnection(TikConnectionType.Api);
+                connection.SendTimeout = 3000;
+                connection.ReceiveTimeout = 3000;
+                connection.Open(nas.NasIpAddress, nas.ApiPort, nas.ApiUsername, nas.ApiPassword);
+
+                string W(ITikReSentence row, string key) =>
+                    row.Words.TryGetValue(key, out var v) ? v : "";
+
+                return connection.CreateCommand("/interface/print").ExecuteList()
+                    .Select(row => new
+                    {
+                        name = W(row, "name"),
+                        type = W(row, "type"),
+                        running = W(row, "running") == "true",
+                        disabled = W(row, "disabled") == "true",
+                        comment = W(row, "comment")
+                    })
+                    // dynamic pppoe-in interfaces of subscribers are not useful here
+                    .Where(i => !string.IsNullOrEmpty(i.name) && i.type != "pppoe-in")
+                    .ToList();
+            });
+
+            var saved = (nas.DashboardInterfaces ?? "")
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            return Ok(new { success = true, interfaces = list, dashboardInterfaces = saved });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { success = false, message = "Unable to read interfaces from router: " + ex.Message });
+        }
+    }
+
+    public class DashboardInterfacesDto
+    {
+        public List<string> Interfaces { get; set; } = new();
+    }
+
+    // =========================================================
+    // SAVE INTERFACES SHOWN ON THE DASHBOARD
+    // PUT api/Nas/dashboard-interfaces/{id}
+    // =========================================================
+    [HttpPut("dashboard-interfaces/{id}")]
+    public async Task<IActionResult> SaveDashboardInterfaces(Guid id, [FromBody] DashboardInterfacesDto dto)
+    {
+        var nas = await _context.NasDevices.FirstOrDefaultAsync(n => n.Id == id);
+        if (nas == null) return NotFound(new { message = "NAS not found" });
+
+        var names = (dto.Interfaces ?? new List<string>())
+            .Select(x => x.Trim()).Where(x => x.Length > 0 && x.Length <= 64 && !x.Contains(','))
+            .Distinct().Take(12).ToList();
+
+        nas.DashboardInterfaces = string.Join(",", names);
+        nas.UpdatedAt = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+        return Ok(new { success = true, message = "Dashboard interfaces saved.", interfaces = names });
+    }
+
+    // =========================================================
+    // LIVE TRAFFIC OF SEVERAL INTERFACES AT ONCE (1 second sample)
+    // GET api/Nas/interface-traffic/{id}?interfaces=ether1,sfp1
+    // =========================================================
+    [HttpGet("interface-traffic/{id}")]
+    public async Task<IActionResult> GetInterfaceTraffic(Guid id, [FromQuery] string? interfaces)
+    {
+        var nas = await _context.NasDevices.AsNoTracking().FirstOrDefaultAsync(n => n.Id == id);
+        if (nas == null) return NotFound(new { message = "NAS not found" });
+
+        var wanted = (interfaces ?? nas.DashboardInterfaces ?? "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Distinct().Take(12).ToHashSet();
+        if (wanted.Count == 0)
+            return Ok(new { success = true, items = Array.Empty<object>() });
+
+        try
+        {
+            var items = await Task.Run(async () =>
+            {
+                using var connection = ConnectionFactory.CreateConnection(TikConnectionType.Api);
+                connection.SendTimeout = 3000;
+                connection.ReceiveTimeout = 3000;
+                connection.Open(nas.NasIpAddress, nas.ApiPort, nas.ApiUsername, nas.ApiPassword);
+
+                Dictionary<string, (long rx, long tx)> Snapshot() =>
+                    connection.CreateCommand("/interface/print").ExecuteList()
+                        .Where(r => r.Words.TryGetValue("name", out var n) && wanted.Contains(n))
+                        .ToDictionary(
+                            r => r.Words["name"],
+                            r => (
+                                long.TryParse(r.Words.GetValueOrDefault("rx-byte"), out var rx) ? rx : 0,
+                                long.TryParse(r.Words.GetValueOrDefault("tx-byte"), out var tx) ? tx : 0));
+
+                var first = Snapshot();
+                var t0 = DateTime.UtcNow;
+                await Task.Delay(1000);
+                var second = Snapshot();
+                var seconds = Math.Max(0.5, (DateTime.UtcNow - t0).TotalSeconds);
+
+                return wanted.Select(name =>
+                {
+                    long rxBps = 0, txBps = 0;
+                    if (first.TryGetValue(name, out var a) && second.TryGetValue(name, out var b))
+                    {
+                        rxBps = (long)(Math.Max(0, b.rx - a.rx) * 8 / seconds);
+                        txBps = (long)(Math.Max(0, b.tx - a.tx) * 8 / seconds);
+                    }
+                    return new
+                    {
+                        name,
+                        found = second.ContainsKey(name),
+                        rx = rxBps,
+                        tx = txBps,
+                        rxBps = FormatBandwidth(rxBps),
+                        txBps = FormatBandwidth(txBps)
+                    };
+                }).ToList();
+            });
+
+            return Ok(new { success = true, time = DateTime.UtcNow, items });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { success = false, message = "Unable to read traffic from router: " + ex.Message });
+        }
+    }
+
     [HttpPost("live-traffic/{id}")]
-    public async Task<IActionResult> GetLiveTraffic(Guid id)
+    public async Task<IActionResult> GetLiveTraffic(Guid id, [FromQuery(Name = "interface")] string? interfaceName = null)
     {
         var nas = await _context.NasDevices.FindAsync(id);
 
@@ -428,7 +568,13 @@ public class NasController : ControllerBase
                 _configuration["PythonSettings:PythonExe"]
                 ?? "python";
 
-            string monitorInterface = "ether3";
+            // Interface chosen in the graph dropdown, else the first dashboard interface
+            string monitorInterface =
+                !string.IsNullOrWhiteSpace(interfaceName)
+                    ? interfaceName.Trim().Replace("\"", "")
+                    : (nas.DashboardInterfaces ?? "")
+                        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                        .FirstOrDefault() ?? "ether1";
 
             var psi = new ProcessStartInfo
             {
