@@ -436,13 +436,34 @@ public class RadiusServerService : BackgroundService
         // 5. FIND SUBSCRIBER
         // -----------------------------------------------------
 
+        // PPPoE / Hotspot: by login name (case-insensitive, uses the unique index)
+        // Static IP / IPoE: by MAC address (MikroTik DHCP-RADIUS or Hotspot MAC
+        // login send the client MAC as User-Name / Calling-Station-Id).
+        var usernameLower = username.ToLower();
         var subscriber =
             await db.Subscribers
                 .FirstOrDefaultAsync(
                     x =>
-                        x.PPPoEUsername == username &&
-                        x.Service == "PPPoE");
+                        x.PPPoEUsername.ToLower() == usernameLower &&
+                        x.Service != "Static");
 
+        bool macAuthentication = false;
+
+        // MAC login is never allowed for PPP (PPPoE) requests, otherwise someone
+        // could type another customer's MAC as PPPoE user name and skip the password.
+        bool isPppRequest = GetAttribute(attributes, FramedProtocol) != null;
+        if (subscriber == null && !isPppRequest)
+        {
+            var macCandidate = await FindByMacAsync(db, username, callingStationId);
+            var routerMac = NormalizeMac(callingStationId);
+            // The MAC the router saw (Calling-Station-Id) must be the registered one
+            if (macCandidate != null &&
+                (routerMac == null || string.Equals(routerMac, macCandidate.MacAddress, StringComparison.OrdinalIgnoreCase)))
+            {
+                subscriber = macCandidate;
+                macAuthentication = true;
+            }
+        }
         if (subscriber == null)
         {
             await RecordAuthenticationLogAsync(
@@ -775,7 +796,14 @@ public class RadiusServerService : BackgroundService
                 attributes,
                 ChapPassword);
 
-        if (userPasswordAttribute != null)
+        if (macAuthentication)
+        {
+            // Router identified the client by its MAC (Static IP / IPoE / Hotspot
+            // MAC login). The MAC is registered on this subscriber of this site.
+            authenticationMethod = "MAC";
+            passwordValid = true;
+        }
+        else if (userPasswordAttribute != null)
         {
             authenticationMethod = "PAP";
 
@@ -984,17 +1012,19 @@ public class RadiusServerService : BackgroundService
                 UserName,
                 username));
 
-        // Framed User
-        responseAttributes.Add(
-            CreateUInt32Attribute(
-                ServiceType,
-                2));
-
-        // PPP
-        responseAttributes.Add(
-            CreateUInt32Attribute(
-                FramedProtocol,
-                1));
+        // Framed User + PPP only for PPPoE (Hotspot / DHCP do not use them)
+        if (!macAuthentication &&
+            string.Equals(subscriber.Service, "PPPoE", StringComparison.OrdinalIgnoreCase))
+        {
+            responseAttributes.Add(
+                CreateUInt32Attribute(
+                    ServiceType,
+                    2));
+            responseAttributes.Add(
+                CreateUInt32Attribute(
+                    FramedProtocol,
+                    1));
+        }
 
         // Dynamic MikroTik Rate Limit
         if (!string.IsNullOrWhiteSpace(rateLimit))
@@ -1218,12 +1248,22 @@ public class RadiusServerService : BackgroundService
 
         if (!string.IsNullOrWhiteSpace(username))
         {
+            var accountingUserLower = username.ToLower();
             subscriber =
                 await db.Subscribers
                     .FirstOrDefaultAsync(
                         x =>
-                            x.PPPoEUsername == username &&
-                            x.Service == "PPPoE");
+                            x.PPPoEUsername.ToLower() == accountingUserLower &&
+                            x.Service != "Static");
+        }
+
+        // DHCP / MAC-login sessions report the MAC as user name
+        if (subscriber == null)
+        {
+            subscriber = await FindByMacAsync(
+                db,
+                username,
+                GetStringAttribute(attributes, 31));
         }
 
         string? callingStationId =
@@ -1707,6 +1747,34 @@ public class RadiusServerService : BackgroundService
             nas.SharedSecret,
             remoteEndpoint,
             listener);
+    }
+
+    // =========================================================
+    // MAC LOOKUP (Static IP / IPoE / Hotspot MAC login)
+    // =========================================================
+
+    /// <summary>"58-04-4f-68-85-7d", "58044F68857D", "5804.4f68.857d" → "58:04:4F:68:85:7D"</summary>
+    public static string? NormalizeMac(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var trimmed = value.Trim();
+        var hex = new string(trimmed.Where(Uri.IsHexDigit).ToArray()).ToUpperInvariant();
+        if (hex.Length != 12) return null;
+        // Only strings that are clearly a MAC (12 hex digits + optional separators)
+        var separators = trimmed.Count(c => c is ':' or '-' or '.');
+        if (trimmed.Length != 12 + separators) return null;
+        return string.Join(":", Enumerable.Range(0, 6).Select(i => hex.Substring(i * 2, 2)));
+    }
+
+    private static async Task<Subscriber?> FindByMacAsync(AppDbContext db, string? username, string? callingStationId)
+    {
+        var mac = NormalizeMac(username) ?? NormalizeMac(callingStationId);
+        if (mac == null) return null;
+
+        // MACs are stored normalised (XX:XX:XX:XX:XX:XX) by the subscriber form
+        return await db.Subscribers.FirstOrDefaultAsync(x =>
+            (x.Service == "Static" || x.Service == "Hotspot" || x.Service == "IPoE") &&
+            x.MacAddress.ToUpper() == mac);
     }
 
     // =========================================================

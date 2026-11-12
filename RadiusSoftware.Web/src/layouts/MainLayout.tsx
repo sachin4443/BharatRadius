@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, Suspense } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
 import { Sidebar } from "../components/Sidebar";
+import ImpersonationBar from "../components/ImpersonationBar";
 import apiClient from "../services/api";
 
 export const MainLayout: React.FC = () => {
@@ -116,20 +117,6 @@ export const MainLayout: React.FC = () => {
     }
   };
 
-  // Safe handler to return to SuperAdmin mode
-  const handleReturnToAdmin = () => {
-    const adminToken = localStorage.getItem("adminToken");
-    const adminUser = localStorage.getItem("adminUser");
-    if (adminToken && adminUser) {
-      localStorage.setItem("token", adminToken);
-      localStorage.setItem("user", adminUser);
-      localStorage.removeItem("adminToken");
-      localStorage.removeItem("adminUser");
-      
-      window.location.assign("/dashboard"); 
-    }
-  };
-
   return (
     <div className="d-flex bg-light vh-100 overflow-hidden" id="wrapper">
       {/* Mobile drawer backdrop */}
@@ -209,18 +196,7 @@ export const MainLayout: React.FC = () => {
             <div className="ms-auto d-flex align-items-center gap-3">
               
               {/* 🔙 Impersonation Back Button */}
-             {localStorage.getItem("adminToken") && (
-  <button
-    className="btn btn-sm btn-admin-glow rounded-pill px-4 py-2 fw-bold shadow-sm d-flex align-items-center gap-2"
-    style={{
-      fontSize: "13px",
-    }}
-    onClick={handleReturnToAdmin}
-  >
-    <span className="fs-6">←</span> 
-    Back to Admin
-  </button>
-)}
+              {/* "Back to Admin" lives in the ImpersonationBar below the navbar */}
 
               {/* Profile Dropdown */}
               <div className="position-relative" ref={dropdownRef}>
@@ -305,6 +281,8 @@ export const MainLayout: React.FC = () => {
             </div>
           </div>
         </nav>
+
+        <ImpersonationBar />
 
         {/* Page Content */}
         <div

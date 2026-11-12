@@ -1,5 +1,6 @@
 using RadiusSoftware.API.Security;
 using RadiusSoftware.API.Services.Query;
+using RadiusSoftware.API.Services.Billing;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -121,13 +122,17 @@ public class SubscribersController : ControllerBase
             NasId = filter.NasId,
             PackageId = filter.PackageId
         };
-        var counts = await _subscriberQuery.ApplyFilter(rows, counterFilter)
+        // Without a text search the counters do not need package / NAS / site joins
+        var countRows = string.IsNullOrWhiteSpace(filter.Search) ? await _subscriberQuery.LeanRowsAsync() : rows;
+        var counts = await _subscriberQuery.ApplyFilter(countRows, counterFilter)
             .GroupBy(r => r.Status)
             .Select(g => new { Status = g.Key, Count = g.Count() })
             .ToListAsync();
 
         var filtered = _subscriberQuery.ApplyFilter(rows, filter);
-        var total = await filtered.CountAsync();
+        var total = string.IsNullOrWhiteSpace(filter.Search)
+            ? await _subscriberQuery.ApplyFilter(countRows, filter).CountAsync()
+            : await filtered.CountAsync();
 
         var items = await _subscriberQuery.ApplySort(filtered, filter)
             .Skip((filter.Page - 1) * filter.PageSize)
@@ -240,12 +245,22 @@ public class SubscribersController : ControllerBase
                 query = query.Where(s => accessibleSiteIds.Contains(s.SiteId));
             }
 
-            var sub = await query
-                .Where(s => s.Id == id)
-                .Select(s => new
+            // One query with LEFT JOINs (was 5 correlated sub-queries)
+            var sub = await (
+                from s in query.Where(x => x.Id == id)
+                join p in _context.PackageProfiles.AsNoTracking() on s.PackageId equals p.Id into pj
+                from p in pj.DefaultIfEmpty()
+                join n in _context.NasDevices.AsNoTracking() on s.NasId equals n.Id into nj
+                from n in nj.DefaultIfEmpty()
+                join site in _context.Sites.AsNoTracking() on s.SiteId equals site.Id into sj
+                from site in sj.DefaultIfEmpty()
+                select new
                 {
                     s.Id,
                     s.SiteId,
+                    SiteName = site != null ? site.SiteName : null,
+                    s.NasId,
+                    s.PackageId,
                     s.FullName,
                     s.SubscriberType,
                     s.CompanyName,
@@ -269,31 +284,16 @@ public class SubscribersController : ControllerBase
                     s.CreatedAt,
                     s.UpdatedAt,
                     s.PhotoUrl,
-
-                    NasName = _context.NasDevices
-                        .Where(n => n.Id == s.NasId)
-                        .Select(n => n.NasName)
-                        .FirstOrDefault() ?? "Global",
-
-                    PackageName = _context.PackageProfiles
-                        .Where(p => p.Id == s.PackageId)
-                        .Select(p => p.PackageName)
-                        .FirstOrDefault() ?? "No Plan",
-
-                    DownloadSpeed = _context.PackageProfiles
-                        .Where(p => p.Id == s.PackageId)
-                        .Select(p => p.DownloadMbps)
-                        .FirstOrDefault(),
-
-                    UploadSpeed = _context.PackageProfiles
-                        .Where(p => p.Id == s.PackageId)
-                        .Select(p => p.UploadMbps)
-                        .FirstOrDefault(),
-
-                    ExpiryDays = _context.PackageProfiles
-                        .Where(p => p.Id == s.PackageId)
-                        .Select(p => p.ExpiryDays)
-                        .FirstOrDefault()
+                    s.LastAuthResult,
+                    s.LastAuthReason,
+                    s.LastAuthAt,
+                    NasName = n != null ? n.NasName : "Global",
+                    PackageName = p != null ? p.PackageName : "No Plan",
+                    DownloadSpeed = p != null ? p.DownloadMbps : 0,
+                    UploadSpeed = p != null ? p.UploadMbps : 0,
+                    ExpiryDays = p != null ? p.ExpiryDays : 0,
+                    ValidityType = p != null ? p.ValidityType : null,
+                    PackagePrice = p != null ? p.Price : 0
                 })
                 .FirstOrDefaultAsync();
 
@@ -305,7 +305,27 @@ public class SubscribersController : ControllerBase
                 });
             }
 
-            return Ok(sub);
+            // Status exactly as the subscriber list shows it (Online / Expired / ...)
+            var state = await (await _subscriberQuery.RowsAsync())
+                .Where(r => r.Id == id)
+                .Select(r => new { r.Status, r.IsOnline })
+                .FirstOrDefaultAsync();
+
+            return Ok(new
+            {
+                sub.Id, sub.SiteId, sub.SiteName, sub.NasId, sub.PackageId,
+                sub.FullName, sub.SubscriberType, sub.CompanyName, sub.Mobile, sub.Email,
+                sub.PortalUsername, sub.Address, sub.Zip, sub.City, sub.State, sub.GstNo, sub.Comment,
+                sub.Service, sub.StaticIp, sub.MacAddress, sub.IsActive, sub.ConnectionEnabled,
+                sub.PPPoEUsername,
+                sub.PPPoEPassword,
+                sub.ExpireDate, sub.CreatedAt, sub.UpdatedAt, sub.PhotoUrl,
+                sub.LastAuthResult, sub.LastAuthReason, sub.LastAuthAt,
+                sub.NasName, sub.PackageName, sub.DownloadSpeed, sub.UploadSpeed,
+                sub.ExpiryDays, sub.ValidityType, sub.PackagePrice,
+                status = state?.Status,
+                isOnline = state?.IsOnline ?? false
+            });
         }
         catch (Exception ex)
         {
@@ -371,10 +391,46 @@ public class SubscribersController : ControllerBase
                     return Conflict(new { message = $"PPPoE username '{pppoeUsername}' already exists. Please choose another username." });
                 }
             }
-            else if (model.Id == Guid.Empty && (model.Service ?? "PPPoE") == "PPPoE")
+            else if (model.Id == Guid.Empty && string.Equals(model.Service ?? "PPPoE", "PPPoE", StringComparison.OrdinalIgnoreCase))
             {
                 return BadRequest(new { message = "PPPoE username is required." });
             }
+
+            // 1c-2. Service specific checks (PPPoE / Hotspot / Static IP)
+            var service = string.IsNullOrWhiteSpace(model.Service) ? "PPPoE" : model.Service.Trim();
+            if (!new[] { "PPPoE", "Hotspot", "Static" }.Contains(service, StringComparer.OrdinalIgnoreCase))
+                return BadRequest(new { message = "Service must be PPPoE, Hotspot or Static." });
+            model.Service = service;
+
+            if (!string.IsNullOrWhiteSpace(model.MacAddress))
+            {
+                var mac = RadiusServerService.NormalizeMac(model.MacAddress);
+                if (mac == null)
+                    return BadRequest(new { message = "MAC address is not valid. Example: 58:04:4F:68:85:7D" });
+                model.MacAddress = mac;
+
+                if (service is "Static" or "Hotspot" &&
+                    await _context.Subscribers.AnyAsync(s => s.Id != model.Id && s.MacAddress.ToUpper() == mac &&
+                                                             (s.Service == "Static" || s.Service == "Hotspot")))
+                    return Conflict(new { message = $"MAC address {mac} is already used by another IP/Hotspot subscriber." });
+            }
+
+            if (!string.IsNullOrWhiteSpace(model.StaticIp))
+            {
+                if (!System.Net.IPAddress.TryParse(model.StaticIp.Trim(), out var ip) ||
+                    ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
+                    return BadRequest(new { message = "Static IP must be a valid IPv4 address, e.g. 10.10.10.25" });
+                model.StaticIp = ip.ToString();
+
+                if (await _context.Subscribers.AnyAsync(s => s.Id != model.Id && s.StaticIp == model.StaticIp))
+                    return Conflict(new { message = $"Static IP {model.StaticIp} is already assigned to another subscriber." });
+            }
+
+            if (service == "Static" && model.Id == Guid.Empty && string.IsNullOrWhiteSpace(model.MacAddress))
+                return BadRequest(new { message = "Static IP (IPoE) subscribers log in by MAC address. Please enter the MAC address." });
+
+            if (service == "Hotspot" && model.Id == Guid.Empty && string.IsNullOrWhiteSpace(pppoeUsername) && string.IsNullOrWhiteSpace(model.MacAddress))
+                return BadRequest(new { message = "Hotspot subscribers need a login username or a MAC address." });
 
             // 1d. NAS and package must belong to the subscriber's site
             if (model.NasId.HasValue &&
@@ -391,6 +447,10 @@ public class SubscribersController : ControllerBase
             // 2. CREATE NEW SUBSCRIBER
             if (model.Id == Guid.Empty)
             {
+                var initialPackage = model.PackageId.HasValue
+                    ? await _context.PackageProfiles.AsNoTracking().FirstOrDefaultAsync(p => p.Id == model.PackageId.Value)
+                    : null;
+
                 var sub = new Subscriber
                 {
                     Id = Guid.NewGuid(),
@@ -417,9 +477,13 @@ public class SubscribersController : ControllerBase
                     StaticIp = model.StaticIp ?? string.Empty,
                     IsActive = model.IsActive,
                     ConnectionEnabled = true,
+                    // Typed date = valid till end of that day (IST). No date but a
+                    // package chosen = first period starts now.
                     ExpireDate = model.ExpireDate.HasValue
-    ? DateTime.SpecifyKind(model.ExpireDate.Value, DateTimeKind.Utc)
-    : null,
+                        ? ExpiryCalculator.FromUserInput(model.ExpireDate.Value)
+                        : initialPackage != null
+                            ? ExpiryCalculator.AddValidity(DateTime.UtcNow, initialPackage)
+                            : null,
                     CreatedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow
                 };
@@ -463,9 +527,21 @@ public class SubscribersController : ControllerBase
                 existingSubscriber.StaticIp = model.StaticIp ?? string.Empty;
                 existingSubscriber.IsActive = model.IsActive;
 
-                existingSubscriber.ExpireDate = model.ExpireDate.HasValue
-                    ? DateTime.SpecifyKind(model.ExpireDate.Value, DateTimeKind.Utc)
-                    : null;
+                // The edit form only shows the date. If the same day comes back, keep the
+                // exact stored time (e.g. 14:30 from a recharge) instead of moving it.
+                if (!model.ExpireDate.HasValue)
+                {
+                    existingSubscriber.ExpireDate = null;
+                }
+                else
+                {
+                    var typed = ExpiryCalculator.FromUserInput(model.ExpireDate.Value);
+                    if (!(existingSubscriber.ExpireDate.HasValue &&
+                          ExpiryCalculator.SameIstDay(existingSubscriber.ExpireDate.Value, typed)))
+                    {
+                        existingSubscriber.ExpireDate = typed;
+                    }
+                }
 
                 existingSubscriber.UpdatedAt = DateTime.UtcNow;
 
@@ -799,8 +875,11 @@ public class SubscribersController : ControllerBase
     }
 
     [HttpGet("{id}/history")]
-    public async Task<IActionResult> GetSubscriberHistory(Guid id)
+    public async Task<IActionResult> GetSubscriberHistory(Guid id, [FromQuery] int take = 300)
     {
+        // Latest sessions only: a subscriber that reconnects often can have
+        // thousands of rows; the profile never needs all of them at once.
+        take = Math.Clamp(take, 1, 2000);
         var subscriberExists = await _context.Subscribers
             .AnyAsync(x => x.Id == id);
 
@@ -813,7 +892,9 @@ public class SubscribersController : ControllerBase
             });
         }
 
+        var totalSessions = await _context.RadiusAccountingSessions.CountAsync(x => x.SubscriberId == id);
         var history = await _context.RadiusAccountingSessions
+            .AsNoTracking()
             .Where(x => x.SubscriberId == id)
             .OrderByDescending(x =>
                 x.StartTime ??
@@ -869,12 +950,14 @@ public class SubscribersController : ControllerBase
 
                 TerminateCause = x.TerminateCause
             })
+            .Take(take)
             .ToListAsync();
 
         return Ok(new
         {
             success = true,
             count = history.Count,
+            total = totalSessions,
             data = history
         });
     }
@@ -975,15 +1058,10 @@ public class SubscribersController : ControllerBase
                     x => x.AssignedAt)
                 .FirstOrDefaultAsync();
 
-        DateTime? expiryDate = null;
-
-        if (currentHistory != null)
-        {
-            int totalDays = CalculateTotalDays(package.ExpiryDays, package.ValidityType);
-            expiryDate =
-                currentHistory.AssignedAt
-                    .AddDays(totalDays);
-        }
+        // The subscriber's ExpireDate is the single source of truth (RADIUS uses it
+        // too). It used to be recalculated here as AssignedAt + 30-day months,
+        // which could show a different date than the list.
+        DateTime? expiryDate = subscriber.ExpireDate;
 
         return Ok(new
         {
@@ -1003,7 +1081,7 @@ public class SubscribersController : ControllerBase
             validityType = package.ValidityType,
 
             assignedAt =
-                currentHistory?.AssignedAt,
+                currentHistory?.StartDate ?? currentHistory?.AssignedAt,
 
             expiryDate,
 
@@ -1213,14 +1291,19 @@ public class SubscribersController : ControllerBase
             // =========================================================
             // 7. CALCULATE TOTAL VALIDITY DAYS BASED ON VALIDITY TYPE
             // =========================================================
-            int calculatedTotalDays = CalculateTotalDays(newPackage.ExpiryDays, newPackage.ValidityType);
+            // Same rule as the Recharge screen: an active subscriber keeps the days
+            // already paid (new period starts at current expiry), an expired one starts now.
+            var changeNow = DateTime.UtcNow;
+            var periodStart = ExpiryCalculator.RechargeStart(subscriber.ExpireDate, changeNow);
+            var periodEnd = ExpiryCalculator.AddValidity(periodStart, newPackage, 1);
+            int calculatedTotalDays = (int)Math.Round((periodEnd - periodStart).TotalDays);
 
             // =========================================================
             // 8. UPDATE SUBSCRIBER CURRENT PACKAGE & EXPIRY
             // =========================================================
 
             subscriber.PackageId = newPackage.Id;
-            subscriber.ExpireDate = DateTime.UtcNow.AddDays(calculatedTotalDays);
+            subscriber.ExpireDate = periodEnd;
             subscriber.UpdatedAt = DateTime.UtcNow;
 
             // =========================================================
@@ -1252,6 +1335,13 @@ public class SubscribersController : ControllerBase
                         newPackage.Price,
 
                     ValidityDays = calculatedTotalDays, // Store total computed days here
+                    SiteId = subscriber.SiteId,
+                    StartDate = periodStart,
+                    EndDate = periodEnd,
+                    Quantity = 1,
+                    AmountCharged = packagePrice,
+                    CreatedByUserId = currentUserId,
+                    CreatedByName = User.Identity?.Name,
 
                     Action =
                         oldHistory.Count > 0
@@ -1448,32 +1538,6 @@ public class SubscribersController : ControllerBase
     }
 
     // Helper method to convert ExpiryDays and ValidityType into actual total days
-    private int CalculateTotalDays(int expiryDays, string? validityType)
-    {
-        if (string.IsNullOrWhiteSpace(validityType))
-        {
-            return expiryDays;
-        }
-
-        string type = validityType.Trim().ToLowerInvariant();
-
-        if (type.Contains("month"))
-        {
-            return expiryDays * 30; // Assuming 1 month = 30 days
-        }
-        else if (type.Contains("year"))
-        {
-            return expiryDays * 365; // Assuming 1 year = 365 days
-        }
-        else if (type.Contains("week"))
-        {
-            return expiryDays * 7; // 1 week = 7 days
-        }
-
-        // Default fallback is days
-        return expiryDays;
-    }
-
     public class ChangeSubscriberPackageRequest
     {
         public Guid PackageId { get; set; }

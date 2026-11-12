@@ -46,6 +46,19 @@ Migration kya karti hai:
 - PPPoE username par unique index (case-insensitive)
 - `UserOwnLogo`: har user ka apna logo (`Users.LogoUrl`). Company admin ka purana logo uske account par copy ho jaata hai.
 
+- `NormalizeSubscriberMacAddresses`: MAC addresses ek format (XX:XX:XX:XX:XX:XX) mein (Static IP / Hotspot MAC login ke liye). Sirf data, koi column nahi badla.
+- `PerformanceIndexes`: RADIUS accounting, auth log, MAC login, wallet ke liye indexes (IF NOT EXISTS).
+
+## Static IP / IPoE aur Hotspot (MikroTik setup)
+
+- **PPPoE**: pehle jaisa (username + password).
+- **Hotspot**: subscriber mein Service = Hotspot, login username/password do. MikroTik Hotspot profile mein `use-radius=yes`.
+  MAC se auto-login ke liye subscriber mein MAC bhariye aur Hotspot `login-by` mein `mac` on kariye.
+- **Static IP / IPoE**: Service = Static, MAC (zaroori) aur Static IP bhariye. MikroTik DHCP server par
+  `use-radius=yes` kariye. Router client ka MAC bhejta hai; RADIUS usi subscriber ko pehchaan kar uska
+  Static IP (Framed-IP-Address), package speed aur expiry tak ka time deta hai. Expire hone par reject.
+- MAC login PPPoE requests ke liye kabhi allow nahi hota (security).
+
 Agar migration "Duplicate PPPoE usernames found" bataye to `Database/remove-duplicate-pppoe-usernames.sql`
 chalaiye (har duplicate ka sabse naya record rakhta hai, history shift karta hai, backup table banata hai).
 

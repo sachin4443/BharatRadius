@@ -1,4 +1,6 @@
 import React, {
+  Suspense,
+  lazy,
   useCallback,
   useEffect,
   useState,
@@ -13,17 +15,41 @@ import apiClient from "../services/api";
 
 import SubscriberPhoto from "../components/subscriber/SubscriberPhoto";
 import SubscriberConnectionButton from "../components/subscriber/SubscriberConnectionButton";
-import SubscriberLiveModal from "../components/subscriber/SubscriberLiveModal";
-import SubscriberPersonalTab from "../components/subscriber/SubscriberPersonalTab";
-import SubscriberLiveSession from "../components/subscriber/SubscriberLiveSession";
-import SubscriberUsageTab from "../components/subscriber/SubscriberUsageTab";
-import SubscriberHistoryTab from "../components/subscriber/SubscriberHistoryTab";
-import SubscriberPackageHistoryTab from "../components/subscriber/SubscriberPackageHistoryTab";
-import SubscriberPackageCard from "../components/subscriber/SubscriberPackageCard";
-import SubscriberDocumentsTab from "../components/subscriber/SubscriberDocumentsTab";
-import RechargeModal from "../components/subscriber/RechargeModal";
 import { usePolling } from "../hooks/usePolling";
+import { getCachedSubscriber, normalizeSubscriber, primeSubscriber } from "../services/subscriberCache";
 
+// Heavy parts are loaded only when they are opened (profile header shows instantly)
+const SubscriberLiveModal = lazy(() => import("../components/subscriber/SubscriberLiveModal"));
+const SubscriberPersonalTab = lazy(() => import("../components/subscriber/SubscriberPersonalTab"));
+const SubscriberLiveSession = lazy(() => import("../components/subscriber/SubscriberLiveSession"));
+const SubscriberUsageTab = lazy(() => import("../components/subscriber/SubscriberUsageTab"));
+const SubscriberHistoryTab = lazy(() => import("../components/subscriber/SubscriberHistoryTab"));
+const SubscriberPackageHistoryTab = lazy(() => import("../components/subscriber/SubscriberPackageHistoryTab"));
+const SubscriberPackageCard = lazy(() => import("../components/subscriber/SubscriberPackageCard"));
+const SubscriberDocumentsTab = lazy(() => import("../components/subscriber/SubscriberDocumentsTab"));
+const RechargeModal = lazy(() => import("../components/subscriber/RechargeModal"));
+
+/** Grey placeholder blocks shown while a part is loading. */
+const SkeletonBlock = ({ height = 16, width = "100%", className = "" }: { height?: number; width?: number | string; className?: string }) => (
+  <div className={`placeholder-glow ${className}`}>
+    <span className="placeholder col-12 rounded-3" style={{ height, width, display: "block" }} />
+  </div>
+);
+
+const SectionFallback = () => (
+  <div className="py-2">
+    <SkeletonBlock height={18} width="40%" className="mb-2" />
+    <SkeletonBlock height={14} className="mb-2" />
+    <SkeletonBlock height={14} width="85%" />
+  </div>
+);
+
+const withPhotoHost = (data: any) => {
+  if (!data) return data;
+  const apiHost = apiClient.defaults.baseURL ? apiClient.defaults.baseURL.replace(/\/api\/?$/, "") : "";
+  const fix = (url?: string) => (url && url.startsWith("/") ? `${apiHost}${url}` : url);
+  return { ...data, photoUrl: fix(data.photoUrl), PhotoUrl: fix(data.PhotoUrl) };
+};
 
 type Tab =
   | "overview"
@@ -41,50 +67,41 @@ const SubscriberProfile: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
-  const [subscriber, setSubscriber] = useState<any>(null);
+  // Draw instantly from the list row (if we came from the list), refresh in background
+  const [subscriber, setSubscriber] = useState<any>(() => getCachedSubscriber(id));
   const [showRecharge, setShowRecharge] = useState(false);
   const [liveData, setLiveData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !getCachedSubscriber(id));
   const [liveLoading, setLiveLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [showLiveModal, setShowLiveModal] = useState(false);
   const [error, setError] = useState("");
 
   const loadSubscriber = useCallback(async () => {
-  if (!id) return;
-
-  try {
-    setLoading(true);
-    setError("");
-
-    const response = await apiClient.get(`/Subscribers/${id}`);
-    let data = response.data?.data ?? response.data;
-
-    // Get dynamic domain root from apiClient base URL (e.g. https://api.bharatradius.com)
-    const apiHost = apiClient.defaults.baseURL 
-      ? apiClient.defaults.baseURL.replace("/api", "") 
-      : "";
-
-    // Fix image URL if it's relative
-    if (data && data.photoUrl && data.photoUrl.startsWith("/")) {
-      data.photoUrl = `${apiHost}${data.photoUrl}`;
+    if (!id) return;
+    try {
+      setError("");
+      const response = await apiClient.get(`/Subscribers/${id}`);
+      const data = withPhotoHost(normalizeSubscriber(response.data?.data ?? response.data));
+      primeSubscriber(data);
+      setSubscriber(data);
+    } catch (error: unknown) {
+      console.error("Subscriber profile loading failed:", error);
+      const errObj = error as { response?: { data?: { message?: string } } };
+      setError(errObj?.response?.data?.message || "Unable to load subscriber profile.");
+    } finally {
+      setLoading(false);
     }
-    if (data && data.PhotoUrl && data.PhotoUrl.startsWith("/")) {
-      data.PhotoUrl = `${apiHost}${data.PhotoUrl}`;
-    }
+  }, [id]);
 
-    setSubscriber(data);
-  } catch (error: unknown) {
-    console.error("Subscriber profile loading failed:", error);
-    const errObj = error as { response?: { data?: { message?: string } } };
-    setError(
-      errObj?.response?.data?.message ||
-        "Unable to load subscriber profile."
-    );
-  } finally {
-    setLoading(false);
-  }
-}, [id]);
+  // Opening another profile: show its cached row immediately
+  useEffect(() => {
+    const cached = getCachedSubscriber(id);
+    setSubscriber(cached);
+    setLiveData(null);
+    setLoading(!cached);
+    setActiveTab("overview");
+  }, [id]);
 
   const loadLiveStatus = useCallback(async () => {
     if (!id) return;
@@ -140,7 +157,7 @@ const SubscriberProfile: React.FC = () => {
     loadLiveStatus();
   };
 
-  const isOnline = Boolean(liveData?.isOnline);
+  const isOnline = Boolean(liveData ? liveData.isOnline : subscriber?.isOnline);
   const connectionEnabled = Boolean(
     liveData?.connectionEnabled ?? subscriber?.connectionEnabled
   );
@@ -155,22 +172,34 @@ const SubscriberProfile: React.FC = () => {
       null,
   };
 
-  if (loading) {
+  if (loading && !subscriber) {
     return (
-      <div
-        className="container-fluid py-5"
-        style={{ background: "#f8fafc", minHeight: "100vh" }}
-      >
-        <div className="d-flex justify-content-center align-items-center py-5">
-          <div className="text-center">
-            <div
-              className="spinner-border text-primary"
-              style={{ width: 48, height: 48, borderWidth: "4px" }}
-            />
-            <div className="text-secondary fw-medium mt-3">
-              Loading subscriber profile...
+      <div className="container-fluid py-3 py-md-4 px-lg-4" style={{ background: "#f8fafc", minHeight: "100vh" }} aria-busy="true">
+        <SkeletonBlock height={36} width={200} className="mb-4" />
+        <div className="card border-0 shadow-sm rounded-4 overflow-hidden mb-4 bg-white">
+          <div style={{ height: 140, background: "linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)", opacity: 0.35 }} />
+          <div className="card-body d-flex gap-4 align-items-center">
+            <div className="placeholder-glow">
+              <span className="placeholder rounded-circle d-block" style={{ width: 96, height: 96 }} />
+            </div>
+            <div className="flex-grow-1">
+              <SkeletonBlock height={26} width="45%" className="mb-2" />
+              <SkeletonBlock height={16} width="30%" className="mb-3" />
+              <SkeletonBlock height={28} width="60%" />
             </div>
           </div>
+        </div>
+        <div className="row g-3 mb-4">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="col-md-4">
+              <div className="card border-0 shadow-sm rounded-4 p-3">
+                <SkeletonBlock height={44} />
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="card border-0 shadow-sm rounded-4 p-4">
+          <SectionFallback />
         </div>
       </div>
     );
@@ -324,7 +353,8 @@ const SubscriberProfile: React.FC = () => {
           ⚡ Recharge
         </button>
         <SubscriberConnectionButton
-          subscriber={subscriber}
+          subscriber={{ ...subscriber, isOnline, connectionEnabled }}
+          livePolling={false}
           onChanged={handleConnectionChanged}
           onLive={openLive}
         />
@@ -341,6 +371,7 @@ const SubscriberProfile: React.FC = () => {
   </div>
 </div>
 {showRecharge && (
+  <Suspense fallback={null}>
   <RechargeModal
     subscriber={{
       ...subscriber,
@@ -351,15 +382,24 @@ const SubscriberProfile: React.FC = () => {
       await loadSubscriber();
     }}
   />
+  </Suspense>
 )}
 {/* ACTIVE PACKAGE */}
-<SubscriberPackageCard
-  subscriber={subscriber}
-  onChanged={async () => {
-    await loadSubscriber();
-    await loadLiveStatus();
-  }}
-/>
+<Suspense
+  fallback={
+    <div className="card border-0 shadow-sm rounded-4 mb-4 p-4">
+      <SectionFallback />
+    </div>
+  }
+>
+  <SubscriberPackageCard
+    subscriber={subscriber}
+    onChanged={async () => {
+      await loadSubscriber();
+      await loadLiveStatus();
+    }}
+  />
+</Suspense>
       {/* QUICK INFO METRICS ROW */}
       <div className="row g- mb-4"> 
         <QuickInfoCard
@@ -402,7 +442,8 @@ const SubscriberProfile: React.FC = () => {
           </div>
 
           {/* TAB CONTENT VIEW */}
-          <div className="p-4 bg-white">
+          <div className="p-3 p-md-4 bg-white">
+            <Suspense fallback={<SectionFallback />}>
             {activeTab === "overview" && <OverviewTab subscriber={subscriber} liveData={liveData} />}
           {activeTab === "personal" && (
   <SubscriberPersonalTab
@@ -442,13 +483,16 @@ const SubscriberProfile: React.FC = () => {
 {activeTab === "documents" && (
   <SubscriberDocumentsTab subscriberId={subscriber.id} />
 )}            {activeTab === "settings" && <ComingSoonTab icon="⚙️" title="Subscriber Settings" description="Account configurations and specific routing rules will appear here." />}
+            </Suspense>
           </div>
         </div>
       </div>
 
       {/* LIVE MODAL */}
       {showLiveModal && (
-        <SubscriberLiveModal subscriber={subscriber} onClose={() => setShowLiveModal(false)} />
+        <Suspense fallback={null}>
+          <SubscriberLiveModal subscriber={subscriber} onClose={() => setShowLiveModal(false)} />
+        </Suspense>
       )}
     </div>
   );

@@ -52,6 +52,10 @@ export default function Login() {
       const res = await API.post("/auth/login", { ...form, rememberMe });
       localStorage.setItem("token", res.data.token);
       localStorage.setItem("user", JSON.stringify(res.data));
+      // A fresh login never continues an old "login as child site" chain
+      localStorage.removeItem("adminSessionStack");
+      localStorage.removeItem("adminToken");
+      localStorage.removeItem("adminUser");
       if (rememberMe) {
         localStorage.setItem("rememberLogin", "1");
         localStorage.setItem("rememberedUser", form.email);

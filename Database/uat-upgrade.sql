@@ -234,3 +234,94 @@ BEGIN
 END $EF$;
 COMMIT;
 
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112100521_NormalizeSubscriberMacAddresses') THEN
+
+    UPDATE "Subscribers"
+    SET "MacAddress" = UPPER(REGEXP_REPLACE(
+            REGEXP_REPLACE(BTRIM("MacAddress"), '[^0-9A-Fa-f]', '', 'g'),
+            '(..)(..)(..)(..)(..)(..)', '\1:\2:\3:\4:\5:\6'))
+    WHERE "MacAddress" <> ''
+      AND (BTRIM("MacAddress") ~* '^([0-9a-f]{2}[-:.]?){5}[0-9a-f]{2}$'
+           OR BTRIM("MacAddress") ~* '^([0-9a-f]{4}\.){2}[0-9a-f]{4}$');
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112100521_NormalizeSubscriberMacAddresses') THEN
+    INSERT INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+    VALUES ('20261112100521_NormalizeSubscriberMacAddresses', '10.0.10');
+    END IF;
+END $EF$;
+COMMIT;
+
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112100802_PerformanceIndexes') THEN
+    CREATE INDEX IF NOT EXISTS "IX_RadiusAccountingSessions_NasId_AcctSessionId"
+                    ON "RadiusAccountingSessions" ("NasId", "AcctSessionId");
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112100802_PerformanceIndexes') THEN
+    CREATE INDEX IF NOT EXISTS "IX_RadiusAccountingSessions_NasId_IsActive"
+                    ON "RadiusAccountingSessions" ("NasId") WHERE "IsActive";
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112100802_PerformanceIndexes') THEN
+    CREATE INDEX IF NOT EXISTS "IX_RadiusAuthenticationLogs_NasId_CreatedAt"
+                    ON "RadiusAuthenticationLogs" ("NasId", "CreatedAt");
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112100802_PerformanceIndexes') THEN
+    CREATE INDEX IF NOT EXISTS "IX_Subscribers_MacAddress_Upper"
+                    ON "Subscribers" (UPPER("MacAddress")) WHERE "MacAddress" <> '';
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112100802_PerformanceIndexes') THEN
+    CREATE INDEX IF NOT EXISTS "IX_SubscriberPackageHistories_SubscriberId_IsCurrent"
+                    ON "SubscriberPackageHistories" ("SubscriberId") WHERE "IsCurrent";
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112100802_PerformanceIndexes') THEN
+    CREATE INDEX IF NOT EXISTS "IX_WalletTransactions_SiteId_CreatedAt"
+                    ON "WalletTransactions" ("SiteId", "CreatedAt");
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112100802_PerformanceIndexes') THEN
+    ANALYZE "RadiusAccountingSessions"; ANALYZE "RadiusAuthenticationLogs"; ANALYZE "Subscribers";
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112100802_PerformanceIndexes') THEN
+    INSERT INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+    VALUES ('20261112100802_PerformanceIndexes', '10.0.10');
+    END IF;
+END $EF$;
+COMMIT;
+

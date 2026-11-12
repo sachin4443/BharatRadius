@@ -90,6 +90,8 @@ public class SubscriberListFilter
 public interface ISubscriberQueryService
 {
     Task<IQueryable<SubscriberRow>> RowsAsync();
+    /// <summary>Same rows and Status, but without package / NAS / site names (cheaper, for counts).</summary>
+    Task<IQueryable<SubscriberRow>> LeanRowsAsync();
     Task<DateTime> OnlineCutoffAsync();
     IQueryable<SubscriberRow> ApplyFilter(IQueryable<SubscriberRow> rows, SubscriberListFilter filter);
     IQueryable<SubscriberRow> ApplySort(IQueryable<SubscriberRow> rows, SubscriberListFilter filter);
@@ -195,6 +197,47 @@ public class SubscriberQueryService : ISubscriberQueryService
                     x.s.ExpireDate != null && x.s.ExpireDate <= now ? SubscriberStatus.Expired :
                     x.IsOnline ? SubscriberStatus.Online :
                     x.s.LastAuthResult == "REJECT" && x.s.LastAuthReason == SubscriberStatus.WrongPasswordReason
+                        ? SubscriberStatus.WrongPassword :
+                    SubscriberStatus.Active
+            };
+    }
+
+    public async Task<IQueryable<SubscriberRow>> LeanRowsAsync()
+    {
+        var siteIds = await _access.GetAccessibleSiteIdsAsync();
+        var now = DateTime.UtcNow;
+        var staleCutoff = await OnlineCutoffAsync();
+
+        var subscribers = _db.Subscribers.AsNoTracking();
+        if (siteIds != null)
+        {
+            var ids = siteIds.ToList();
+            subscribers = subscribers.Where(s => ids.Contains(s.SiteId));
+        }
+
+        return
+            from s in subscribers
+            let online = _db.RadiusAccountingSessions.Any(r =>
+                r.SubscriberId == s.Id &&
+                r.IsActive &&
+                (r.LastUpdateTime ?? r.StartTime ?? r.CreatedAt) >= staleCutoff)
+            select new SubscriberRow
+            {
+                Id = s.Id,
+                SiteId = s.SiteId,
+                NasId = s.NasId,
+                PackageId = s.PackageId,
+                ExpireDate = s.ExpireDate,
+                IsActive = s.IsActive,
+                ConnectionEnabled = s.ConnectionEnabled,
+                IsOnline = online,
+                CreatedAt = s.CreatedAt,
+                Status =
+                    !s.IsActive ? SubscriberStatus.Suspended :
+                    !s.ConnectionEnabled ? SubscriberStatus.Disabled :
+                    s.ExpireDate != null && s.ExpireDate <= now ? SubscriberStatus.Expired :
+                    online ? SubscriberStatus.Online :
+                    s.LastAuthResult == "REJECT" && s.LastAuthReason == SubscriberStatus.WrongPasswordReason
                         ? SubscriberStatus.WrongPassword :
                     SubscriberStatus.Active
             };
