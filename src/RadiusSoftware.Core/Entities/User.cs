@@ -20,6 +20,9 @@ public class User
     /// <summary>JSON list of dashboard widgets this user wants to see.</summary>
     public string? DashboardConfigJson { get; set; }
 
+    /// <summary>Logo / profile picture uploaded by this user (shown in the sidebar and header).</summary>
+    public string? LogoUrl { get; set; }
+
     // 👇 YEH NAYI PROPERTIES ADD KARNI HAIN 👇
     public Guid? RoleId { get; set; }
     public Role? Role { get; set; }

@@ -22,6 +22,7 @@ import SubscriberPackageHistoryTab from "../components/subscriber/SubscriberPack
 import SubscriberPackageCard from "../components/subscriber/SubscriberPackageCard";
 import SubscriberDocumentsTab from "../components/subscriber/SubscriberDocumentsTab";
 import RechargeModal from "../components/subscriber/RechargeModal";
+import { usePolling } from "../hooks/usePolling";
 
 
 type Tab =
@@ -104,16 +105,10 @@ const SubscriberProfile: React.FC = () => {
 
   useEffect(() => {
     loadSubscriber();
-    loadLiveStatus();
+  }, [loadSubscriber]);
 
-    const timer = window.setInterval(() => {
-      loadLiveStatus();
-    }, 5000);
-
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [loadSubscriber, loadLiveStatus]);
+  // Live status every 10 s, paused while the tab is hidden
+  usePolling(loadLiveStatus, 10000, true, [loadLiveStatus]);
 
   const handlePhotoUpdated = async (photoUrl: string) => {
   // Get dynamic domain root from apiClient base URL (e.g. https://api.bharatradius.com)

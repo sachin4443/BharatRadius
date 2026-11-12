@@ -1189,6 +1189,9 @@ namespace RadiusSoftware.Infrastructure.Migrations
                     b.Property<bool>("IsSuperAdmin")
                         .HasColumnType("boolean");
 
+                    b.Property<string>("LogoUrl")
+                        .HasColumnType("text");
+
                     b.Property<string>("Mobile")
                         .IsRequired()
                         .HasColumnType("text");

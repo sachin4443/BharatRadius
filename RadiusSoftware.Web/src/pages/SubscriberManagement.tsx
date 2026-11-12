@@ -9,6 +9,7 @@ import SubscriberStatusBadge from "../components/subscriber/SubscriberStatusBadg
 import SubscriberExcelImport from "../components/subscriber/SubscriberExcelImport";
 import RechargeModal from "../components/subscriber/RechargeModal";
 import { daysUntil, formatDate, saveBlob } from "../utils/format";
+import { usePolling } from "../hooks/usePolling";
 
 // ============================================================
 // TYPES
@@ -370,15 +371,13 @@ const SubscriberManagement: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, pageSize, debouncedSearch, statusFilter, routerFilter]);
 
-  // Silent refresh every 30 seconds (online / offline status)
-  useEffect(() => {
-    if (!initialised) return;
-    const t = window.setInterval(() => {
-      fetchSubscribers().catch(() => undefined);
-    }, 30000);
-    return () => window.clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialised, page, pageSize, debouncedSearch, statusFilter, routerFilter]);
+  // Silent refresh every 30 seconds (online / offline status), paused when tab hidden
+  usePolling(
+    () => fetchSubscribers().catch(() => undefined),
+    30000,
+    initialised,
+    [page, pageSize, debouncedSearch, statusFilter, routerFilter],
+  );
 
   const changeStatusFilter = (value: string) => {
     setStatusFilter(value);
@@ -710,7 +709,7 @@ const SubscriberManagement: React.FC = () => {
 
   return (
     <div
-      className="container-fluid py-4"
+      className="container-fluid py-2 py-md-4 px-0 px-md-3"
       style={{
         minHeight: "100vh",
         background: "#f6f8fb",
@@ -720,12 +719,12 @@ const SubscriberManagement: React.FC = () => {
           HEADER
       ======================================================= */}
 
-      <div className="bg-white border rounded-4 shadow-sm p-4 mb-4">
+      <div className="bg-white border rounded-4 shadow-sm p-3 p-md-4 mb-3 mb-md-4">
         <div className="d-flex justify-content-between align-items-center flex-wrap gap-3">
           {/* Left Side: Icon & Title */}
           <div className="d-flex align-items-center gap-3">
             <div
-              className="d-flex align-items-center justify-content-center rounded-3 bg-light border shadow-sm"
+              className="d-none d-md-flex align-items-center justify-content-center rounded-3 bg-light border shadow-sm"
               style={{
                 width: 48,
                 height: 48,
@@ -736,7 +735,7 @@ const SubscriberManagement: React.FC = () => {
             </div>
             <div>
               <h3 className="fw-bold mb-1 text-brand">Subscriber Management</h3>
-              <div className="small text-muted">
+              <div className="small text-muted d-none d-md-block">
                 Manage subscribers, PPPoE accounts, packages, routers and live
                 connections.
               </div>
@@ -919,223 +918,129 @@ const SubscriberManagement: React.FC = () => {
           </div>
         </div>
 
-        <div className="table-responsive">
-          <table className="table table-hover align-middle mb-0">
-            <thead
-              style={{
-                background: "#f8fafc",
-              }}
-            >
-              <tr>
-                <th className="ps-4 py-3">Subscriber</th>
-
-
-                <th className="d-none d-lg-table-cell">Router</th>
-
-                <th>Package</th>
-
-                <th>Expiry Date</th>
-                <th className="d-none d-xl-table-cell">IP / MAC</th>
+        <div className="table-responsive" style={{ maxHeight: "70vh" }}>
+          <table className="table table-sm table-hover align-middle mb-0 subscriber-table">
+            <thead className="table-light" style={{ position: "sticky", top: 0, zIndex: 1 }}>
+              <tr className="text-nowrap small">
+                <th className="ps-3">#</th>
                 <th>Status</th>
-
-                <th className="text-end pe-4">Actions</th>
+                <th>Username</th>
+                <th>Full Name</th>
+                <th className="d-none d-md-table-cell">Mobile</th>
+                <th className="d-none d-xxl-table-cell">Address</th>
+                <th className="d-none d-lg-table-cell">NAS</th>
+                <th className="d-none d-md-table-cell">Package</th>
+                <th>Expiry Date</th>
+                <th className="text-end pe-3">Actions</th>
               </tr>
             </thead>
-
             <tbody>
               {pageLoading ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-5">
-                    <div className="spinner-border text-primary" />
-
-                    <div className="small text-muted mt-2">
-                      Loading subscribers...
-                    </div>
+                  <td colSpan={10} className="text-center py-5">
+                    <div className="spinner-border text-warning" />
+                    <div className="small text-muted mt-2">Loading subscribers...</div>
                   </td>
                 </tr>
               ) : filteredSubscribers.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-5">
-                    <div
-                      style={{
-                        fontSize: 42,
-                      }}
-                    >
-                      👥
-                    </div>
-
+                  <td colSpan={10} className="text-center py-5">
+                    <div style={{ fontSize: 36 }}>👥</div>
                     <div className="fw-semibold mt-2">No subscribers found</div>
-
-                    <div className="small text-muted">
-                      Try changing your filters.
-                    </div>
+                    <div className="small text-muted">Try changing your filters.</div>
                   </td>
                 </tr>
               ) : (
-                filteredSubscribers.map((subscriber) => {
+                filteredSubscribers.map((subscriber, index) => {
                   const router = getRouter(subscriber);
-
                   const pkg = getPackage(subscriber);
-
+                  const username = subscriber.pppoeUsername || subscriber.ppPoEUsername || "—";
+                  const rowClass =
+                    subscriber.status === "Online"
+                      ? "row-online"
+                      : subscriber.status === "Expired"
+                        ? "row-expired"
+                        : subscriber.status === "Suspended" || subscriber.status === "Disabled"
+                          ? "row-blocked"
+                          : "";
                   return (
-                    <tr key={subscriber.id}>
-                      {/* SUBSCRIBER */}
-
-                      <td className="ps-4">
-                        <div className="d-flex align-items-center gap-3">
-                          <div
-                            className="rounded-circle d-flex align-items-center justify-content-center text-white fw-bold"
-                            style={{
-                              width: 44,
-                              height: 44,
-                              background:
-                                "linear-gradient(135deg,#6366f1,#4f46e5)",
-                            }}
-                          >
-                            {(subscriber.fullName || "U")
-                              .charAt(0)
-                              .toUpperCase()}
-                          </div>
-
-                          <div>
-                            <div className="fw-bold">{subscriber.fullName}</div>
-
-                            <div className="small text-muted">
-                              {subscriber.pppoeUsername || subscriber.ppPoEUsername}
-                            </div>
-
-                            <div className="small text-muted">
-                              {subscriber.subscriberType}
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-
-                      {/* PPPOE */}
-
-                      
-                      {/* ROUTER */}
-                      <td className="d-none d-lg-table-cell">
-                        {router ? (
-                          <>
-                            <div className="fw-semibold">{router.nasName}</div>
-
-                            <div className="small text-muted font-monospace">
-                              {router.nasIpAddress}
-                            </div>
-
-                            <span
-                              className={`badge rounded-pill mt-1 ${
-                                router.isOnline
-                                  ? "bg-success"
-                                  : "bg-light text-secondary border"
-                              }`}
-                            >
-                              {router.isOnline ? "Online" : "Offline"}
-                            </span>
-                          </>
-                        ) : (
-                          <span className="text-muted">Not Assigned</span>
-                        )}
-                      </td>
-
-                      {/* PACKAGE */}
-
-                      <td>
-                        {pkg ? (
-                          <>
-                            <div className="fw-semibold">{pkg.packageName}</div>
-
-                            <small className="text-muted">
-                              {pkg.downloadMbps}/{pkg.uploadMbps} Mbps
-                            </small>
-                          </>
-                        ) : subscriber.packageName ? (
-                          <div className="fw-semibold">{subscriber.packageName}</div>
-                        ) : (
-                          <span className="text-muted">—</span>
-                        )}
-                      </td>
-                      {/* EXPIRY */}
-                      <td>
-                        <ExpiryCell value={subscriber.expireDate} />
-                      </td>
-                      {/* IP */}
-                      <td className="d-none d-xl-table-cell">
-                        <div className="font-monospace fw-semibold">
-                          {subscriber.staticIp || "Dynamic"}
-                        </div>
-
-                        {subscriber.macAddress && (
-                          <small className="text-muted font-monospace">
-                            {subscriber.macAddress}
-                          </small>
-                        )}
-                      </td>
-
-                      {/* STATUS */}
-
+                    <tr key={subscriber.id} className={`small ${rowClass}`}>
+                      <td className="ps-3 text-muted">{(page - 1) * pageSize + index + 1}</td>
                       <td>
                         <SubscriberStatusBadge subscriber={subscriber} />
                         {subscriber.lastAuthReason &&
                           subscriber.status === "Active" &&
                           (subscriber as any).lastAuthResult === "REJECT" && (
-                            <div className="text-muted mt-1" style={{ fontSize: 11 }}>
-                              Last login: {subscriber.lastAuthReason}
+                            <div className="text-muted mt-1" style={{ fontSize: 10 }}>
+                              {subscriber.lastAuthReason}
                             </div>
                           )}
                       </td>
-
-                      {/* ACTIONS */}
-
-                      <td className="text-end pe-4">
-                        <div className="d-flex justify-content-end gap-2 flex-wrap">
+                      <td>
+                        <a
+                          href={`/subscribers/${subscriber.id}`}
+                          className="fw-semibold text-decoration-none"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            navigate(`/subscribers/${subscriber.id}`);
+                          }}
+                        >
+                          {username}
+                        </a>
+                      </td>
+                      <td className="text-truncate" style={{ maxWidth: 180 }}>{subscriber.fullName}</td>
+                      <td className="d-none d-md-table-cell text-nowrap">{subscriber.mobile || "—"}</td>
+                      <td className="d-none d-xxl-table-cell text-truncate" style={{ maxWidth: 200 }} title={subscriber.address}>
+                        {subscriber.address || "—"}
+                      </td>
+                      <td className="d-none d-lg-table-cell text-nowrap">
+                        {router?.nasName || subscriber.nasName || <span className="text-muted">—</span>}
+                      </td>
+                      <td className="d-none d-md-table-cell">
+                        <div className="fw-semibold text-primary">{pkg?.packageName || subscriber.packageName || "—"}</div>
+                        {pkg && (
+                          <div className="text-muted" style={{ fontSize: 11 }}>
+                            {pkg.downloadMbps}/{pkg.uploadMbps} Mbps
+                          </div>
+                        )}
+                      </td>
+                      <td className="text-nowrap">
+                        <ExpiryCell value={subscriber.expireDate} />
+                      </td>
+                      <td className="text-end pe-3">
+                        <div className="d-flex justify-content-end align-items-center gap-1 flex-nowrap">
                           <button
                             type="button"
-                            className="btn btn-sm btn-brand rounded-pill px-3"
+                            className="btn btn-sm btn-brand rounded-pill px-2 text-nowrap"
                             onClick={() => setRechargeFor(subscriber)}
+                            title="Recharge"
                           >
-                            ⚡ Recharge
+                            ⚡
                           </button>
-                          <SubscriberConnectionButton
-                            subscriber={subscriber}
-                            livePolling={false}
-                            onChanged={() => fetchData(false)}
-                          />
-
                           <button
                             type="button"
-                            className="btn btn-sm btn-outline-primary rounded-pill px-3"
+                            className="btn btn-sm btn-light border rounded-pill px-2"
                             onClick={() => setSelectedSubscriber(subscriber)}
+                            title="Live"
                           >
-                            📊 Live
+                            📊
                           </button>
-
                           <button
                             type="button"
-                            className="btn btn-sm btn-light border rounded-pill px-3"
-                            onClick={() =>
-                              navigate(`/subscribers/${subscriber.id}`)
-                            }
-                          >
-                            👤 Profile
-                          </button>
-
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-light border rounded-pill px-3"
+                            className="btn btn-sm btn-light border rounded-pill px-2"
                             onClick={() => handleEdit(subscriber)}
+                            title="Edit"
                           >
-                            ✏️ Edit
+                            ✏️
                           </button>
-
-                          {/* <button
-                            type="button"
-                            className="btn btn-sm btn-outline-danger rounded-pill px-3"
-                            onClick={() => handleDelete(subscriber.id)}
-                          >
-                            🗑
-                          </button> */}
+                          <div className="d-none d-xxl-block">
+                            <SubscriberConnectionButton
+                              subscriber={subscriber}
+                              livePolling={false}
+                              compact
+                              onChanged={() => fetchData(false)}
+                            />
+                          </div>
                         </div>
                       </td>
                     </tr>
@@ -2095,7 +2000,7 @@ const SummaryCard = ({
   onClick?: () => void;
 }) => {
   return (
-    <div className="col-6 col-md-4 col-xl">
+    <div className="col-4 col-md-4 col-xl">
       <div
         role={onClick ? "button" : undefined}
         onClick={onClick}
@@ -2108,16 +2013,16 @@ const SummaryCard = ({
           cursor: onClick ? "pointer" : "default",
         }}
       >
-        <div className="p-3">
+        <div className="p-2 p-md-3">
           <div className="d-flex justify-content-between align-items-start gap-2">
             <div className="min-w-0">
               <div
-                className="small fw-semibold mb-2 text-truncate"
-                style={{ color: "#64748b", fontSize: 12 }}
+                className="small fw-semibold mb-1 mb-md-2 text-truncate"
+                style={{ color: "#64748b", fontSize: 11 }}
               >
                 {title}
               </div>
-              <div className="fw-bold" style={{ color, fontSize: 26, lineHeight: 1 }}>
+              <div className="fw-bold" style={{ color, fontSize: "clamp(18px, 4.5vw, 26px)", lineHeight: 1 }}>
                 {value}
               </div>
             </div>

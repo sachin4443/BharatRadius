@@ -210,3 +210,23 @@ code {
   transform: translateY(-1px);
   box-shadow: 0 6px 15px rgba(234, 88, 12, 0.4) !important;
 }
+/* ---------- Subscriber list ---------- */
+.subscriber-table > :not(caption) > * > * {
+  padding-top: 0.45rem;
+  padding-bottom: 0.45rem;
+}
+.subscriber-table tr.row-online > td {
+  background-color: #ecfdf5;
+}
+.subscriber-table tr.row-expired > td {
+  background-color: #fef2f2;
+}
+.subscriber-table tr.row-blocked > td {
+  background-color: #f8fafc;
+  color: #64748b;
+}
+.subscriber-table thead th {
+  font-weight: 600;
+  color: #475569;
+  border-bottom-width: 1px;
+}

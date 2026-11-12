@@ -90,14 +90,36 @@ public class SubscriberListFilter
 public interface ISubscriberQueryService
 {
     Task<IQueryable<SubscriberRow>> RowsAsync();
+    Task<DateTime> OnlineCutoffAsync();
     IQueryable<SubscriberRow> ApplyFilter(IQueryable<SubscriberRow> rows, SubscriberListFilter filter);
     IQueryable<SubscriberRow> ApplySort(IQueryable<SubscriberRow> rows, SubscriberListFilter filter);
 }
 
 public class SubscriberQueryService : ISubscriberQueryService
 {
-    /// <summary>A session without an accounting update for this long is treated as offline.</summary>
-    public static readonly TimeSpan StaleSessionAfter = TimeSpan.FromMinutes(30);
+    /// <summary>
+    /// A RADIUS session counts as "online" only while the router keeps sending
+    /// accounting updates. If no Interim-Update arrived for 3 interim periods
+    /// (minimum 15 minutes) the session is treated as gone (router rebooted,
+    /// link lost without a STOP packet...).
+    /// </summary>
+    public static TimeSpan StaleWindow(int maxInterimSeconds) =>
+        TimeSpan.FromSeconds(Math.Max(15 * 60, 3 * Math.Max(60, maxInterimSeconds) + 60));
+
+    private static int _cachedMaxInterim = 300;
+    private static DateTime _cachedMaxInterimAt = DateTime.MinValue;
+
+    public async Task<DateTime> OnlineCutoffAsync()
+    {
+        if (DateTime.UtcNow - _cachedMaxInterimAt > TimeSpan.FromMinutes(5))
+        {
+            _cachedMaxInterim = await _db.NasDevices.AsNoTracking()
+                .Where(n => n.IsEnabled)
+                .MaxAsync(n => (int?)n.InterimTime) ?? 300;
+            _cachedMaxInterimAt = DateTime.UtcNow;
+        }
+        return DateTime.UtcNow - StaleWindow(_cachedMaxInterim);
+    }
 
     private readonly AppDbContext _db;
     private readonly ISiteAccessService _access;
@@ -112,7 +134,7 @@ public class SubscriberQueryService : ISubscriberQueryService
     {
         var siteIds = await _access.GetAccessibleSiteIdsAsync();
         var now = DateTime.UtcNow;
-        var staleCutoff = now - StaleSessionAfter;
+        var staleCutoff = await OnlineCutoffAsync();
 
         var subscribers = _db.Subscribers.AsNoTracking();
         if (siteIds != null)

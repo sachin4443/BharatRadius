@@ -148,6 +148,11 @@ public class RadiusServerService : BackgroundService
                     IPAddress.Any,
                     _listenAcctPort));
 
+        RadiusServerStatus.Running = true;
+        RadiusServerStatus.StartedAt = DateTime.UtcNow;
+        RadiusServerStatus.AuthPort = _listenAuthPort;
+        RadiusServerStatus.AcctPort = _listenAcctPort;
+
         await LogAndBroadcast(
             $"🚀 .NET RADIUS Authentication Server started on UDP {_listenAuthPort}",
             "SYSTEM");
@@ -168,9 +173,16 @@ public class RadiusServerService : BackgroundService
                 true,
                 stoppingToken);
 
-        await Task.WhenAll(
-            authenticationTask,
-            accountingTask);
+        try
+        {
+            await Task.WhenAll(
+                authenticationTask,
+                accountingTask);
+        }
+        finally
+        {
+            RadiusServerStatus.Running = false;
+        }
     }
 
     // =========================================================
@@ -224,6 +236,8 @@ public class RadiusServerService : BackgroundService
         UdpClient listener,
         bool accounting)
     {
+        RadiusServerStatus.LastPacketAt = DateTime.UtcNow;
+        Interlocked.Increment(ref RadiusServerStatus.PacketsReceived);
         try
         {
             if (!TryParseRadiusPacket(
@@ -1651,6 +1665,28 @@ public class RadiusServerService : BackgroundService
         // OTHER ACCOUNTING EVENTS
         // -----------------------------------------------------
 
+        // Accounting-On / Accounting-Off: the router (re)started or is shutting
+        // down, so none of its old sessions exist any more. Close them so the
+        // "online" count stays real.
+        else if (status.Value == 7 || status.Value == 8)
+        {
+            var nowUtc = DateTime.UtcNow;
+            var openSessions = await db.RadiusAccountingSessions
+                .Where(r => r.NasId == nas.Id && r.IsActive)
+                .ToListAsync();
+
+            foreach (var open in openSessions)
+            {
+                open.IsActive = false;
+                open.StopTime = nowUtc;
+                open.UpdatedAt = nowUtc;
+                open.TerminateCause = status.Value == 7 ? "NAS-Reboot" : "NAS-Shutdown";
+            }
+
+            await LogAndBroadcast(
+                $"Accounting {statusName} received from {nas.NasName}. {openSessions.Count} old sessions closed.",
+                "WARNING");
+        }
         else
         {
             await LogAndBroadcast(
@@ -2818,4 +2854,15 @@ public class RadiusServerService : BackgroundService
         byte Type,
         byte[] Value,
         int Offset = -1);
+}
+
+/// <summary>Live state of the built-in RADIUS server (shown on the super admin dashboard).</summary>
+public static class RadiusServerStatus
+{
+    public static volatile bool Running;
+    public static DateTime? StartedAt;
+    public static DateTime? LastPacketAt;
+    public static long PacketsReceived;
+    public static int AuthPort;
+    public static int AcctPort;
 }

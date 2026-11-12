@@ -1,7 +1,8 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import apiClient from "../../services/api";
 import { apiError } from "../../utils/format";
+import { usePolling } from "../../hooks/usePolling";
 
 interface NasItem {
   id: string;
@@ -54,7 +55,6 @@ const NasInterfaceGraphs: React.FC = () => {
   const [pickerSearch, setPickerSearch] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const busy = useRef(false);
 
   useEffect(() => {
     apiClient
@@ -77,19 +77,13 @@ const NasInterfaceGraphs: React.FC = () => {
     setError("");
   }, [nasId, nasList]);
 
-  // Poll every 3 seconds
-  useEffect(() => {
-    if (!nasId || selected.length === 0 || paused) return;
-    let stopped = false;
-
-    const tick = async () => {
-      if (busy.current) return;
-      busy.current = true;
+  // Poll every 3 seconds; never overlaps, pauses while the tab is hidden
+  usePolling(
+    async () => {
       try {
         const res = await apiClient.get(`/Nas/interface-traffic/${nasId}`, {
           params: { interfaces: selected.join(",") },
         });
-        if (stopped) return;
         const time = new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
         setSeries((prev) => {
           const next = { ...prev };
@@ -102,19 +96,13 @@ const NasInterfaceGraphs: React.FC = () => {
         });
         setError("");
       } catch (err) {
-        if (!stopped) setError(apiError(err, "Router not reachable."));
-      } finally {
-        busy.current = false;
+        setError(apiError(err, "Router not reachable."));
       }
-    };
-
-    tick();
-    const t = window.setInterval(tick, 3000);
-    return () => {
-      stopped = true;
-      window.clearInterval(t);
-    };
-  }, [nasId, selected, paused]);
+    },
+    3000,
+    !!nasId && selected.length > 0 && !paused,
+    [nasId, selected.join(",")],
+  );
 
   const openPicker = async () => {
     setShowPicker(true);

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, Suspense } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
 import { Sidebar } from "../components/Sidebar";
 import apiClient from "../services/api";
@@ -57,23 +57,39 @@ export const MainLayout: React.FC = () => {
     // Keep only the "Remember Me" login id
     const remember = localStorage.getItem("rememberLogin");
     const rememberedUser = localStorage.getItem("rememberedUser");
+    const rememberedLogo = localStorage.getItem("rememberedLogo");
     localStorage.clear();
     if (remember === "1" && rememberedUser) {
       localStorage.setItem("rememberLogin", "1");
       localStorage.setItem("rememberedUser", rememberedUser);
+      if (rememberedLogo) localStorage.setItem("rememberedLogo", rememberedLogo);
     }
     navigate("/");
   };
 
+  // Logo is resized in the browser (max 256 px) so upload and page load stay fast
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setProfileData({ ...profileData, logoUrl: reader.result as string });
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+    if (!/^image\/(png|jpe?g|webp)$/i.test(file.type)) {
+      alert("Please choose a PNG, JPG or WEBP image.");
+      return;
     }
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const img = new Image();
+      img.onload = () => {
+        const max = 256;
+        const scale = Math.min(1, max / Math.max(img.width, img.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext("2d")?.drawImage(img, 0, 0, canvas.width, canvas.height);
+        setProfileData((prev) => ({ ...prev, logoUrl: canvas.toDataURL("image/png") }));
+      };
+      img.src = reader.result as string;
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleProfileSave = async (e: React.FormEvent) => {
@@ -82,9 +98,14 @@ export const MainLayout: React.FC = () => {
       const response = await apiClient.put("/Auth/update-profile", {
         fullName: profileData.fullName,
         logoUrl: profileData.logoUrl,
+        removeLogo: !profileData.logoUrl && !!user?.logoUrl,
       });
 
       localStorage.setItem("user", JSON.stringify(response.data));
+      if (localStorage.getItem("rememberLogin") === "1") {
+        if (response.data?.logoUrl) localStorage.setItem("rememberedLogo", response.data.logoUrl);
+        else localStorage.removeItem("rememberedLogo");
+      }
       setUser(response.data);
       setShowProfileModal(false);
       alert("Profile & Logo updated successfully in database!");
@@ -290,7 +311,15 @@ export const MainLayout: React.FC = () => {
           className="p-2 p-md-4 flex-grow-1 overflow-auto"
           style={{ backgroundColor: "#f8fafc" }}
         >
-          <Outlet />
+          <Suspense
+            fallback={
+              <div className="d-flex justify-content-center py-5">
+                <div className="spinner-border text-warning" role="status" />
+              </div>
+            }
+          >
+            <Outlet />
+          </Suspense>
         </div>
       </div>
 
@@ -349,11 +378,23 @@ export const MainLayout: React.FC = () => {
                         📁 Upload Logo/Image
                         <input
                           type="file"
-                          accept="image/*"
+                          accept="image/png,image/jpeg,image/webp"
                           className="d-none"
                           onChange={handleImageUpload}
                         />
                       </label>
+                      {profileData.logoUrl && (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-light border rounded-pill px-3 ms-2"
+                          onClick={() => setProfileData((prev) => ({ ...prev, logoUrl: "" }))}
+                        >
+                          Remove
+                        </button>
+                      )}
+                      <div className="text-muted mt-1" style={{ fontSize: 11 }}>
+                        This logo is only for your account / site.
+                      </div>
                     </div>
                   </div>
                   <div className="mb-3">

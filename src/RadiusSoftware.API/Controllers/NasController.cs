@@ -304,18 +304,8 @@ public class NasController : ControllerBase
 
         try
         {
-            var routerStats = await Task.Run(() =>
+            var routerStats = await RouterApi.RunAsync<object>(nas, connection =>
             {
-                using var connection = ConnectionFactory.CreateConnection(TikConnectionType.Api);
-
-                // Fast Timeout Settings
-                connection.SendTimeout = 1500;
-                connection.ReceiveTimeout = 1500;
-                connection.Open(
-                    nas.NasIpAddress,
-                    nas.ApiPort,
-                    nas.ApiUsername,
-                    nas.ApiPassword);
 
                 // Fetch system resource and details
                 var identity = connection.CreateCommand("/system/identity/print").ExecuteScalar("name")?.ToString() ?? nas.NasName;
@@ -402,11 +392,15 @@ public class NasController : ControllerBase
 
             return Ok(routerStats);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             nas.IsOnline = false;
             await _context.SaveChangesAsync();
-            return BadRequest(new { success = false, message = "Connection error or timeout" });
+            return BadRequest(new
+            {
+                success = false,
+                message = ex is RouterUnreachableException ? ex.Message : "Connection error or timeout"
+            });
         }
     }
     // =========================================================
@@ -421,24 +415,17 @@ public class NasController : ControllerBase
 
         try
         {
-            var list = await Task.Run(() =>
+            var list = await RouterApi.RunAsync(nas, connection =>
             {
-                using var connection = ConnectionFactory.CreateConnection(TikConnectionType.Api);
-                connection.SendTimeout = 3000;
-                connection.ReceiveTimeout = 3000;
-                connection.Open(nas.NasIpAddress, nas.ApiPort, nas.ApiUsername, nas.ApiPassword);
-
-                string W(ITikReSentence row, string key) =>
-                    row.Words.TryGetValue(key, out var v) ? v : "";
-
-                return connection.CreateCommand("/interface/print").ExecuteList()
+                var cmd = connection.CreateCommandAndParameters("/interface/print", ".proplist", "name,type,running,disabled,comment");
+                return cmd.ExecuteList()
                     .Select(row => new
                     {
-                        name = W(row, "name"),
-                        type = W(row, "type"),
-                        running = W(row, "running") == "true",
-                        disabled = W(row, "disabled") == "true",
-                        comment = W(row, "comment")
+                        name = RouterApi.Word(row, "name"),
+                        type = RouterApi.Word(row, "type"),
+                        running = RouterApi.Word(row, "running") == "true",
+                        disabled = RouterApi.Word(row, "disabled") == "true",
+                        comment = RouterApi.Word(row, "comment")
                     })
                     // dynamic pppoe-in interfaces of subscribers are not useful here
                     .Where(i => !string.IsNullOrEmpty(i.name) && i.type != "pppoe-in")
@@ -493,53 +480,27 @@ public class NasController : ControllerBase
 
         var wanted = (interfaces ?? nas.DashboardInterfaces ?? "")
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Distinct().Take(12).ToHashSet();
+            .Distinct().Take(12).ToList();
         if (wanted.Count == 0)
             return Ok(new { success = true, items = Array.Empty<object>() });
 
         try
         {
-            var items = await Task.Run(async () =>
+            var traffic = await RouterApi.RunAsync(nas, connection => RouterApi.InterfaceTraffic(connection, wanted));
+
+            var items = wanted.Select(name =>
             {
-                using var connection = ConnectionFactory.CreateConnection(TikConnectionType.Api);
-                connection.SendTimeout = 3000;
-                connection.ReceiveTimeout = 3000;
-                connection.Open(nas.NasIpAddress, nas.ApiPort, nas.ApiUsername, nas.ApiPassword);
-
-                Dictionary<string, (long rx, long tx)> Snapshot() =>
-                    connection.CreateCommand("/interface/print").ExecuteList()
-                        .Where(r => r.Words.TryGetValue("name", out var n) && wanted.Contains(n))
-                        .ToDictionary(
-                            r => r.Words["name"],
-                            r => (
-                                long.TryParse(r.Words.GetValueOrDefault("rx-byte"), out var rx) ? rx : 0,
-                                long.TryParse(r.Words.GetValueOrDefault("tx-byte"), out var tx) ? tx : 0));
-
-                var first = Snapshot();
-                var t0 = DateTime.UtcNow;
-                await Task.Delay(1000);
-                var second = Snapshot();
-                var seconds = Math.Max(0.5, (DateTime.UtcNow - t0).TotalSeconds);
-
-                return wanted.Select(name =>
+                traffic.TryGetValue(name, out var t);
+                return new
                 {
-                    long rxBps = 0, txBps = 0;
-                    if (first.TryGetValue(name, out var a) && second.TryGetValue(name, out var b))
-                    {
-                        rxBps = (long)(Math.Max(0, b.rx - a.rx) * 8 / seconds);
-                        txBps = (long)(Math.Max(0, b.tx - a.tx) * 8 / seconds);
-                    }
-                    return new
-                    {
-                        name,
-                        found = second.ContainsKey(name),
-                        rx = rxBps,
-                        tx = txBps,
-                        rxBps = FormatBandwidth(rxBps),
-                        txBps = FormatBandwidth(txBps)
-                    };
-                }).ToList();
-            });
+                    name,
+                    found = traffic.ContainsKey(name),
+                    rx = t.rx,
+                    tx = t.tx,
+                    rxBps = FormatBandwidth(t.rx),
+                    txBps = FormatBandwidth(t.tx)
+                };
+            }).ToList();
 
             return Ok(new { success = true, time = DateTime.UtcNow, items });
         }
@@ -549,111 +510,49 @@ public class NasController : ControllerBase
         }
     }
 
+    // Single interface traffic for the "Real-time traffic" graph.
+    // POST api/Nas/live-traffic/{id}?interface=ether1
     [HttpPost("live-traffic/{id}")]
     public async Task<IActionResult> GetLiveTraffic(Guid id, [FromQuery(Name = "interface")] string? interfaceName = null)
     {
-        var nas = await _context.NasDevices.FindAsync(id);
-
+        var nas = await _context.NasDevices.AsNoTracking().FirstOrDefaultAsync(n => n.Id == id);
         if (nas == null)
             return NotFound(new { message = "NAS not found" });
 
+        // Interface chosen in the graph dropdown, else the first dashboard interface
+        var monitorInterface =
+            !string.IsNullOrWhiteSpace(interfaceName)
+                ? interfaceName.Trim()
+                : (nas.DashboardInterfaces ?? "")
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .FirstOrDefault() ?? "ether1";
+
         try
         {
-            string script = Path.Combine(
-                Directory.GetCurrentDirectory(),
-                "Pythonfiles",
-                "get_traffic.py");
+            var traffic = await RouterApi.RunAsync(nas, connection =>
+                RouterApi.InterfaceTraffic(connection, new[] { monitorInterface }));
 
-            string pythonExe =
-                _configuration["PythonSettings:PythonExe"]
-                ?? "python";
-
-            // Interface chosen in the graph dropdown, else the first dashboard interface
-            string monitorInterface =
-                !string.IsNullOrWhiteSpace(interfaceName)
-                    ? interfaceName.Trim().Replace("\"", "")
-                    : (nas.DashboardInterfaces ?? "")
-                        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                        .FirstOrDefault() ?? "ether1";
-
-            var psi = new ProcessStartInfo
+            if (!traffic.TryGetValue(monitorInterface, out var t))
             {
-                FileName = pythonExe,
-
-                Arguments =
-                    $"\"{script}\" " +
-                    $"\"{nas.NasIpAddress}\" " +
-                    $"\"{nas.ApiUsername}\" " +
-                    $"\"{nas.ApiPassword}\" " +
-                    $"{nas.ApiPort} " +
-                    $"\"{monitorInterface}\"",
-
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            using var process = Process.Start(psi);
-
-            if (process == null)
-            {
-                return BadRequest(new
-                {
-                    success = false,
-                    message = "Unable to start Python."
-                });
+                return BadRequest(new { success = false, message = $"Interface '{monitorInterface}' not found on {nas.NasName}." });
             }
-
-            string output = await process.StandardOutput.ReadToEndAsync();
-            string error = await process.StandardError.ReadToEndAsync();
-
-            await process.WaitForExitAsync();
-
-            if (!string.IsNullOrWhiteSpace(error))
-            {
-                return BadRequest(new
-                {
-                    success = false,
-                    message = error
-                });
-            }
-
-            if (string.IsNullOrWhiteSpace(output))
-            {
-                return BadRequest(new
-                {
-                    success = false,
-                    message = "Python returned empty response."
-                });
-            }
-
-            using JsonDocument doc = JsonDocument.Parse(output);
-
-            if (!doc.RootElement.GetProperty("success").GetBoolean())
-                return BadRequest(doc.RootElement);
-
-            long rx = doc.RootElement.GetProperty("rx").GetInt64();
-            long tx = doc.RootElement.GetProperty("tx").GetInt64();
 
             return Ok(new
             {
                 success = true,
-                rx,
-                tx,
-                rxBps = FormatBandwidth(rx),
-                txBps = FormatBandwidth(tx)
+                @interface = monitorInterface,
+                rx = t.rx,
+                tx = t.tx,
+                rxBps = FormatBandwidth(t.rx),
+                txBps = FormatBandwidth(t.tx)
             });
         }
         catch (Exception ex)
         {
-            return BadRequest(new
-            {
-                success = false,
-                message = ex.ToString()
-            });
+            return BadRequest(new { success = false, message = ex.Message });
         }
     }
+
     private string FormatBytes(long bytes)
     {
         if (bytes == 0) return "0 GB";
@@ -677,91 +576,68 @@ public class NasController : ControllerBase
     }
 
     [HttpPost("live-ping/{id}")]
-    public async Task<IActionResult> GetLivePing(
-    Guid id,
-    [FromQuery] string target = "8.8.8.8")
+    public async Task<IActionResult> GetLivePing(Guid id, [FromQuery] string target = "8.8.8.8")
     {
-        var nas = await _context.NasDevices.FindAsync(id);
-
+        var nas = await _context.NasDevices.AsNoTracking().FirstOrDefaultAsync(n => n.Id == id);
         if (nas == null)
             return NotFound(new { message = "NAS not found" });
 
+        target = (target ?? "8.8.8.8").Trim();
+        if (target.Length > 253 || target.Any(c => !(char.IsLetterOrDigit(c) || c is '.' or '-' or ':')))
+            return BadRequest(new { success = false, message = "Invalid ping target." });
+
         try
         {
-            string script = Path.Combine(
-                Directory.GetCurrentDirectory(),
-                "Pythonfiles",
-                "get_ping.py");
+            var rows = await RouterApi.RunAsync(nas, connection =>
+                connection.CreateCommandAndParameters("/ping", "address", target, "count", "3").ExecuteList().ToList(),
+                timeoutMs: 8000);
 
-            string pythonExe =
-                _configuration["PythonSettings:PythonExe"]
-                ?? "python";
+            var last = rows.LastOrDefault();
+            if (last == null)
+                return BadRequest(new { success = false, message = "No ping reply." });
 
-            var psi = new ProcessStartInfo
-            {
-                FileName = pythonExe,
-                Arguments =
-                    $"\"{script}\" " +
-                    $"\"{nas.NasIpAddress}\" " +
-                    $"\"{nas.ApiUsername}\" " +
-                    $"\"{nas.ApiPassword}\" " +
-                    $"{nas.ApiPort} " +
-                    $"\"{target}\"",
-
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            using var process = Process.Start(psi);
-
-            if (process == null)
-            {
-                return BadRequest(new
-                {
-                    success = false,
-                    message = "Unable to start Python."
-                });
-            }
-
-            string output = await process.StandardOutput.ReadToEndAsync();
-            string error = await process.StandardError.ReadToEndAsync();
-
-            await process.WaitForExitAsync();
-
-            if (!string.IsNullOrWhiteSpace(error))
-            {
-                return BadRequest(new
-                {
-                    success = false,
-                    message = error
-                });
-            }
-
-            using JsonDocument doc = JsonDocument.Parse(output);
-
-            if (!doc.RootElement.GetProperty("success").GetBoolean())
-                return BadRequest(doc.RootElement);
+            double.TryParse(RouterApi.Word(last, "packet-loss"), System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var loss);
 
             return Ok(new
             {
                 success = true,
-                latency = doc.RootElement.GetProperty("latency").GetDouble(),
-                min = doc.RootElement.GetProperty("min").GetDouble(),
-                avg = doc.RootElement.GetProperty("avg").GetDouble(),
-                max = doc.RootElement.GetProperty("max").GetDouble(),
-                packetLoss = doc.RootElement.GetProperty("packetLoss").GetDouble(),
+                latency = RouterApi.ParseMs(RouterApi.Word(last, "time")),
+                min = RouterApi.ParseMs(RouterApi.Word(last, "min-rtt")),
+                avg = RouterApi.ParseMs(RouterApi.Word(last, "avg-rtt")),
+                max = RouterApi.ParseMs(RouterApi.Word(last, "max-rtt")),
+                packetLoss = loss,
                 target
             });
         }
         catch (Exception ex)
         {
-            return BadRequest(new
+            return BadRequest(new { success = false, message = ex.Message });
+        }
+    }
+
+    // =========================================================
+    // ACTIVE PPPoE SESSIONS ON THE ROUTER (to compare with RADIUS)
+    // GET api/Nas/ppp-active/{id}
+    // =========================================================
+    [HttpGet("ppp-active/{id}")]
+    public async Task<IActionResult> GetPppActiveCount(Guid id)
+    {
+        var nas = await _context.NasDevices.AsNoTracking().FirstOrDefaultAsync(n => n.Id == id);
+        if (nas == null) return NotFound(new { message = "NAS not found" });
+
+        try
+        {
+            var count = await RouterApi.RunAsync(nas, connection =>
             {
-                success = false,
-                message = ex.ToString()
+                var value = connection.CreateCommandAndParameters("/ppp/active/print", "count-only", "").ExecuteScalar();
+                return int.TryParse(value?.ToString(), out var n) ? n : 0;
             });
+            return Ok(new { success = true, nasId = id, routerActive = count });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { success = false, message = ex.Message });
         }
     }
 
