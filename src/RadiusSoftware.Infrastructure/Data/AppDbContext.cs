@@ -29,6 +29,7 @@ public class AppDbContext : DbContext
     public DbSet<SmsGatewayConfig> SmsGatewayConfigs => Set<SmsGatewayConfig>();
     public DbSet<SmsLog> SmsLogs => Set<SmsLog>();
     public DbSet<PaymentGatewayConfig> PaymentGatewayConfigs => Set<PaymentGatewayConfig>();
+    public DbSet<WalletTopup> WalletTopups => Set<WalletTopup>();
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -90,5 +91,9 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<SmsLog>().HasIndex(x => x.CreatedAt);
         modelBuilder.Entity<SmsLog>().HasIndex(x => x.SubscriberId);
         modelBuilder.Entity<PaymentGatewayConfig>().HasIndex(x => new { x.OrganizationId, x.SiteId });
+
+        // Online wallet top-ups: one row per gateway order
+        modelBuilder.Entity<WalletTopup>().HasIndex(x => x.ProviderOrderId).IsUnique();
+        modelBuilder.Entity<WalletTopup>().HasIndex(x => new { x.SiteId, x.CreatedAt });
     }
 }

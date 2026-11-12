@@ -325,3 +325,53 @@ BEGIN
 END $EF$;
 COMMIT;
 
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112103501_AddWalletTopups') THEN
+    CREATE TABLE "WalletTopups" (
+        "Id" uuid NOT NULL,
+        "SiteId" uuid NOT NULL,
+        "UserId" uuid,
+        "Amount" numeric(18,2) NOT NULL,
+        "Currency" character varying(10) NOT NULL,
+        "Provider" character varying(50) NOT NULL,
+        "PaymentGatewayConfigId" uuid,
+        "ProviderOrderId" character varying(100) NOT NULL,
+        "ProviderPaymentId" character varying(100),
+        "PaymentMethod" character varying(50),
+        "Status" character varying(20) NOT NULL,
+        "FailureReason" character varying(300),
+        "WalletTransactionId" uuid,
+        "CreatedAt" timestamp with time zone NOT NULL,
+        "PaidAt" timestamp with time zone,
+        "UpdatedAt" timestamp with time zone NOT NULL,
+        CONSTRAINT "PK_WalletTopups" PRIMARY KEY ("Id")
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112103501_AddWalletTopups') THEN
+    CREATE UNIQUE INDEX "IX_WalletTopups_ProviderOrderId" ON "WalletTopups" ("ProviderOrderId");
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112103501_AddWalletTopups') THEN
+    CREATE INDEX "IX_WalletTopups_SiteId_CreatedAt" ON "WalletTopups" ("SiteId", "CreatedAt");
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112103501_AddWalletTopups') THEN
+    INSERT INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+    VALUES ('20261112103501_AddWalletTopups', '10.0.10');
+    END IF;
+END $EF$;
+COMMIT;
+

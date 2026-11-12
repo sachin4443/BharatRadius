@@ -134,3 +134,22 @@ waghera se override bhi kar sakte hain. UDP 514 par sirf ek listener chal sakta 
 - [ ] L1: SMS & Payment Gateway, Test SMS
 - [ ] Excel import: Username/Password columns, duplicate rows
 - [ ] Mobile par sidebar menu aur tables
+
+## Online wallet top-up (Razorpay) – L2 / L3 "Add Money"
+
+1. L1 admin: **SMS & Payment Gateway → Payment Gateway → + Add**
+   - Applies to: "All sites (default)" (ya kisi ek site ke liye)
+   - Provider: Razorpay, Mode: TEST ya LIVE
+   - API key = Razorpay **Key ID**, API secret = **Key Secret**
+   - Save karke **Test** dabaiye ("Razorpay keys are working" aana chahiye)
+2. Razorpay Dashboard → Settings → **Webhooks → Add**:
+   - URL: `https://<api-domain>/api/WalletTopup/webhook/razorpay` (page par Copy button hai)
+   - Events: `payment.captured`, `order.paid`, `payment.failed`
+   - Secret jo yahan dein, wahi "Salt / Webhook secret" mein save kariye
+3. L2 / L3 site: top bar mein wallet balance ke paas **+ Add**, ya Wallet Transactions → **+ Add Money**.
+   Recharge ke time balance kam ho to Recharge popup mein bhi "Add money" button aata hai.
+4. Paisa **L1 ke Razorpay account** mein jaata hai. Wallet tabhi credit hota hai jab Razorpay
+   payment ko confirm kare (signature + captured status + sahi amount). Ek payment se ek hi baar credit.
+5. Browser band ho gaya ho to webhook apne-aap credit kar deta hai; ya Wallet Transactions → Online payments
+   → **Check status**.
+6. Server ko `api.razorpay.com` aur browser ko `checkout.razorpay.com` tak internet access chahiye.

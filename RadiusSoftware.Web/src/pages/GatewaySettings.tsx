@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import apiClient from "../services/api";
+import apiClient, { API_BASE_URL } from "../services/api";
 import { apiError, currentLevel, formatDate } from "../utils/format";
 
 type Tab = "sms" | "payment" | "logs";
@@ -135,6 +135,18 @@ const GatewaySettings: React.FC = () => {
     }
   };
 
+  const testPayment = async (id: string) => {
+    setBusy(true);
+    try {
+      const res = await apiClient.post(`/Gateways/payment/${id}/test`);
+      alert(res.data?.message || "Keys are working.");
+    } catch (err) {
+      alert(apiError(err, "Keys could not be verified."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const sendTest = async () => {
     setBusy(true);
     try {
@@ -240,6 +252,27 @@ const GatewaySettings: React.FC = () => {
       {tab === "payment" && (
         <div className="card border-0 shadow-sm rounded-4">
           <div className="card-body">
+            <div className="rounded-3 border p-3 mb-3 small" style={{ background: "#fff7ed", borderColor: "#fed7aa" }}>
+              <div className="fw-semibold mb-1">Online wallet top-up (L2 / L3 "Add Money")</div>
+              <div className="text-muted">
+                Sites pay with UPI, debit / ATM card, credit card, net banking or wallets. The money goes to the
+                Razorpay account saved here (a site's own setting, else its parent's, else "All sites (default)").
+              </div>
+              <div className="mt-2">
+                In the Razorpay dashboard add a <b>webhook</b> (events <code>payment.captured</code>, <code>order.paid</code>,{" "}
+                <code>payment.failed</code>) with this URL and put its secret in "Salt / Webhook secret":
+                <div className="input-group input-group-sm mt-1">
+                  <input className="form-control font-monospace" readOnly value={`${API_BASE_URL}/WalletTopup/webhook/razorpay`} />
+                  <button
+                    className="btn btn-light border"
+                    type="button"
+                    onClick={() => navigator.clipboard?.writeText(`${API_BASE_URL}/WalletTopup/webhook/razorpay`)}
+                  >
+                    Copy
+                  </button>
+                </div>
+              </div>
+            </div>
             <div className="d-flex justify-content-between mb-2">
               <h6 className="fw-bold mb-0">Payment gateways</h6>
               <button className="btn btn-sm btn-brand rounded-pill px-3" onClick={() => setPayForm({ ...emptyPayment })}>+ Add</button>
@@ -260,6 +293,9 @@ const GatewaySettings: React.FC = () => {
                       <td className="font-monospace">{c.apiSecretMasked || "—"}</td>
                       <td>{c.isActive ? <span className="badge bg-success">Active</span> : <span className="badge bg-secondary">Off</span>}</td>
                       <td className="text-end text-nowrap">
+                        {c.provider === "Razorpay" && (
+                          <button className="btn btn-sm btn-light border me-1" disabled={busy} onClick={() => testPayment(c.id)}>Test</button>
+                        )}
                         <button className="btn btn-sm btn-light border me-1" onClick={() => setPayForm({ ...emptyPayment, ...c, siteId: c.siteId || "", apiSecret: "", saltOrWebhookSecret: "" })}>Edit</button>
                         <button className="btn btn-sm btn-outline-danger" onClick={() => remove("payment", c.id)}>🗑</button>
                       </td>

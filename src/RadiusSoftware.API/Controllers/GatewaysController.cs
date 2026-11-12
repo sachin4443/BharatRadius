@@ -356,6 +356,27 @@ public class GatewaysController : ControllerBase
         return Ok(new { message = "Payment gateway saved.", id = cfg.Id });
     }
 
+    /// <summary>Checks the saved Razorpay Key ID / Secret against Razorpay.</summary>
+    [HttpPost("payment/{id:guid}/test")]
+    public async Task<IActionResult> TestPayment(Guid id, [FromServices] RadiusSoftware.API.Services.Payments.IRazorpayService razorpay)
+    {
+        var cfg = await _db.PaymentGatewayConfigs.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id);
+        if (cfg == null) return NotFound();
+        var (_, error) = await ResolveScopeAsync(cfg.SiteId, cfg.OrganizationId);
+        if (error != null) return error;
+        if (cfg.Provider != "Razorpay")
+            return BadRequest(new { message = "Online wallet top-up currently supports Razorpay." });
+        try
+        {
+            await razorpay.TestKeysAsync(cfg);
+            return Ok(new { message = $"Razorpay keys are working ({cfg.Mode} mode)." });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { message = ex is RadiusSoftware.API.Services.Payments.PaymentGatewayException ? ex.Message : "Could not reach Razorpay." });
+        }
+    }
+
     [HttpDelete("payment/{id:guid}")]
     public async Task<IActionResult> DeletePayment(Guid id)
     {
