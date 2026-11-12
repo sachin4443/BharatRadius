@@ -39,6 +39,39 @@ public class AuthController : ControllerBase
         return DateTime.UtcNow.AddMinutes(double.Parse(_configuration["JwtSettings:ExpiryMinutes"]!));
     }
 
+
+    /// <summary>
+    /// What the browser keeps about the logged-in user. Every user has their OWN
+    /// logo; a site user sees the site's name, an organization admin the company name.
+    /// </summary>
+    private object UserInfo(User user, Site? site, string token, string level)
+    {
+        // Site users: only their own logo. Organization admins: own logo, else the company logo.
+        var logo = !string.IsNullOrWhiteSpace(user.LogoUrl)
+            ? user.LogoUrl
+            : site == null ? user.Organization?.LogoUrl : null;
+
+        var fullLogoUrl = logo != null && !logo.StartsWith("http")
+            ? $"{Request.Scheme}://{Request.Host}{logo}"
+            : logo;
+
+        var displayName = site != null
+            ? (!string.IsNullOrWhiteSpace(site.CompanyName) ? site.CompanyName : site.SiteName)
+            : user.Organization?.Name ?? "ISP Portal";
+
+        return new
+        {
+            Token = token,
+            Username = user.Username,
+            FullName = user.FullName,
+            IsSuperAdmin = user.IsSuperAdmin,
+            OrgType = level,
+            CompanyName = displayName,
+            SiteName = site?.SiteName,
+            LogoUrl = fullLogoUrl
+        };
+    }
+
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequestDto model)
     {
@@ -85,21 +118,7 @@ public class AuthController : ControllerBase
         var token = tokenHandler.CreateToken(tokenDescriptor);
         var tokenString = tokenHandler.WriteToken(token);
 
-        var orgLogo = user.Organization?.LogoUrl;
-        var fullLogoUrl = orgLogo != null && !orgLogo.StartsWith("http")
-            ? $"{Request.Scheme}://{Request.Host}{orgLogo}"
-            : orgLogo;
-
-        return Ok(new
-        {
-            Token = tokenString,
-            Username = user.Username,
-            FullName = user.FullName,
-            IsSuperAdmin = user.IsSuperAdmin,
-            OrgType = levelStr,
-            CompanyName = user.Organization?.Name ?? "ISP Portal",
-            LogoUrl = fullLogoUrl
-        });
+        return Ok(UserInfo(user, userSite, tokenString, levelStr));
     }
 
     [HttpPost("seed-superadmin")]
@@ -247,14 +266,8 @@ public class AuthController : ControllerBase
         var token = tokenHandler.CreateToken(tokenDescriptor);
         var tokenString = tokenHandler.WriteToken(token);
 
-        return Ok(new
-        {
-            Token = tokenString,
-            Username = targetUser.Username,
-            FullName = targetUser.FullName,
-            IsSuperAdmin = targetUser.IsSuperAdmin,
-            OrgType = levelStr
-        });
+        await _context.Entry(targetUser).Reference(u => u.Organization).LoadAsync();
+        return Ok(UserInfo(targetUser, targetSite, tokenString, levelStr));
     }
 
     [Authorize]
@@ -262,59 +275,73 @@ public class AuthController : ControllerBase
     public async Task<IActionResult> UpdateProfile([FromBody] UpdateProfileDto model)
     {
         var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        if (userIdClaim == null) return Unauthorized();
+        if (!Guid.TryParse(userIdClaim, out var userId)) return Unauthorized();
 
         var user = await _context.Users
             .Include(u => u.Organization)
-            .FirstOrDefaultAsync(u => u.Id.ToString() == userIdClaim);
+            .FirstOrDefaultAsync(u => u.Id == userId);
 
         if (user == null) return NotFound(new { message = "User not found" });
 
-        user.FullName = model.FullName;
+        if (!string.IsNullOrWhiteSpace(model.FullName))
+            user.FullName = model.FullName.Trim();
 
-        if (user.Organization != null && !string.IsNullOrEmpty(model.LogoUrl))
+        var site = await _context.Sites.FirstOrDefaultAsync(s => s.UserId == user.Id && !s.IsDeleted);
+
+        if (model.RemoveLogo)
         {
-            string? savedLogoUrl = model.LogoUrl;
-            if (model.LogoUrl.StartsWith("data:image"))
+            user.LogoUrl = null;
+        }
+        else if (!string.IsNullOrEmpty(model.LogoUrl) && model.LogoUrl.StartsWith("data:image"))
+        {
+            // data:image/png;base64,....
+            var dataParts = model.LogoUrl.Split(',', 2);
+            var header = dataParts[0].ToLowerInvariant();
+            var extension = header.Contains("png") ? "png"
+                : header.Contains("webp") ? "webp"
+                : header.Contains("jpeg") || header.Contains("jpg") ? "jpg"
+                : null;
+            if (extension == null || dataParts.Length < 2)
+                return BadRequest(new { message = "Only PNG, JPG or WEBP images are allowed." });
+
+            byte[] bytes;
+            try { bytes = Convert.FromBase64String(dataParts[1]); }
+            catch { return BadRequest(new { message = "Invalid image." }); }
+            if (bytes.Length > 2 * 1024 * 1024)
+                return BadRequest(new { message = "Logo must be smaller than 2 MB." });
+
+            var uploadsFolder = Path.Combine(_env.WebRootPath ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot"), "uploads", "logos");
+            Directory.CreateDirectory(uploadsFolder);
+
+            var fileName = $"{user.Id:N}_{Guid.NewGuid():N}.{extension}";
+            await System.IO.File.WriteAllBytesAsync(Path.Combine(uploadsFolder, fileName), bytes);
+
+            // Remove the user's previous logo file
+            if (!string.IsNullOrEmpty(user.LogoUrl) && user.LogoUrl.StartsWith("/uploads/logos/"))
             {
-                var dataParts = model.LogoUrl.Split(',');
-                var extension = dataParts[0].Contains("png") ? "png" : "jpg";
-                var bytes = Convert.FromBase64String(dataParts[1]);
-
-                var uploadsFolder = Path.Combine(_env.WebRootPath ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot"), "uploads", "logos");
-                if (!Directory.Exists(uploadsFolder)) Directory.CreateDirectory(uploadsFolder);
-
-                var fileName = $"{Guid.NewGuid()}.{extension}";
-                var filePath = Path.Combine(uploadsFolder, fileName);
-                System.IO.File.WriteAllBytes(filePath, bytes);
-
-                savedLogoUrl = $"/uploads/logos/{fileName}";
+                var old = Path.Combine(uploadsFolder, Path.GetFileName(user.LogoUrl));
+                try { if (System.IO.File.Exists(old)) System.IO.File.Delete(old); } catch { }
             }
 
-            user.Organization.LogoUrl = savedLogoUrl;
+            user.LogoUrl = $"/uploads/logos/{fileName}";
+
+            // The organization admin's logo is also the company logo
+            if (site == null && user.Organization != null && !user.IsSuperAdmin)
+                user.Organization.LogoUrl = user.LogoUrl;
         }
 
         await _context.SaveChangesAsync();
 
-        var orgLogo = user.Organization?.LogoUrl;
-        var fullLogoUrl = orgLogo != null && !orgLogo.StartsWith("http")
-            ? $"{Request.Scheme}://{Request.Host}{orgLogo}"
-            : orgLogo;
-
-        return Ok(new
-        {
-            token = Request.Headers["Authorization"].ToString().Replace("Bearer ", ""),
-            username = user.Username,
-            fullName = user.FullName,
-            isSuperAdmin = user.IsSuperAdmin,
-            orgType = user.Organization?.Type ?? "L1",
-            logoUrl = fullLogoUrl
-        });
+        var level = User.FindFirst("Level")?.Value
+            ?? (user.IsSuperAdmin ? "L0" : site != null ? $"L{site.SiteLevel}" : $"L{user.Organization?.Level ?? 1}");
+        var token = Request.Headers["Authorization"].ToString().Replace("Bearer ", "");
+        return Ok(UserInfo(user, site, token, level));
     }
 
     public class UpdateProfileDto
     {
         public string FullName { get; set; } = string.Empty;
         public string? LogoUrl { get; set; }
+        public bool RemoveLogo { get; set; }
     }
 }

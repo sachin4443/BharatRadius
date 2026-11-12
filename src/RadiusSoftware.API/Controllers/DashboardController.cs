@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using RadiusSoftware.API.Security;
 using RadiusSoftware.API.Services.Query;
 using RadiusSoftware.Infrastructure.Data;
@@ -17,12 +18,14 @@ public class DashboardController : ControllerBase
     private readonly AppDbContext _db;
     private readonly ISiteAccessService _access;
     private readonly ISubscriberQueryService _subscribers;
+    private readonly IMemoryCache _cache;
 
-    public DashboardController(AppDbContext db, ISiteAccessService access, ISubscriberQueryService subscribers)
+    public DashboardController(AppDbContext db, ISiteAccessService access, ISubscriberQueryService subscribers, IMemoryCache cache)
     {
         _db = db;
         _access = access;
         _subscribers = subscribers;
+        _cache = cache;
     }
 
     private async Task<List<Guid>?> SiteIdsAsync() => (await _access.GetAccessibleSiteIdsAsync())?.ToList();
@@ -35,6 +38,17 @@ public class DashboardController : ControllerBase
     public async Task<IActionResult> Summary([FromQuery] Guid? siteId)
     {
         if (siteId.HasValue && !await _access.CanAccessSiteAsync(siteId.Value)) return Forbid();
+
+        // Several browsers / tabs refresh the dashboard; compute at most every 15 s per user
+        var cacheKey = $"dash-summary:{_access.CurrentUserId}:{siteId}";
+        if (_cache.TryGetValue(cacheKey, out object? cached) && cached != null) return Ok(cached);
+        var fresh = await BuildSummaryAsync(siteId);
+        _cache.Set(cacheKey, fresh, TimeSpan.FromSeconds(15));
+        return Ok(fresh);
+    }
+
+    private async Task<object> BuildSummaryAsync(Guid? siteId)
+    {
 
         var rows = await _subscribers.RowsAsync();
         if (siteId.HasValue) rows = rows.Where(r => r.SiteId == siteId.Value);
@@ -91,7 +105,7 @@ public class DashboardController : ControllerBase
         }
         var rejectsToday = await authToday.CountAsync(l => l.Result == "REJECT");
 
-        return Ok(new
+        return new
         {
             generatedAt = now,
             totalSubscribers = statusCounts.Sum(x => x.Count),
@@ -117,7 +131,168 @@ public class DashboardController : ControllerBase
             monthRechargeCount = monthRecharge?.Count ?? 0,
             monthRechargeAmount = monthRecharge?.Amount ?? 0,
             rejectsToday
-        });
+        };
+    }
+
+    // =========================================================
+    // ROLE OVERVIEW (real data, no dummy values)
+    //  - Super admin : every company (L1) with its sites / subscribers / online
+    //  - Org admin   : every site of the company
+    //  - Site admin  : own site + child sites
+    // GET api/Dashboard/overview
+    // =========================================================
+    [HttpGet("overview")]
+    public async Task<IActionResult> Overview()
+    {
+        var cacheKey = $"dash-overview:{_access.CurrentUserId}";
+        if (_cache.TryGetValue(cacheKey, out object? cached) && cached != null) return Ok(cached);
+
+        var siteIds = await SiteIdsAsync();
+        var now = DateTime.UtcNow;
+        var monthStart = IstClock.ToUtc(new DateTime(IstClock.NowIst.Year, IstClock.NowIst.Month, 1));
+
+        var sitesQ = _db.Sites.AsNoTracking().Where(s => !s.IsDeleted);
+        if (siteIds != null) sitesQ = sitesQ.Where(s => siteIds.Contains(s.Id));
+        var sites = await sitesQ
+            .Select(s => new
+            {
+                s.Id, s.SiteName, s.CompanyName, s.SiteLevel, s.ParentSiteId, s.ParentOrganisationID, s.IsActive,
+                AdminUsername = s.User != null ? s.User.Username : null
+            })
+            .ToListAsync();
+
+        // Subscriber counters per site (status computed exactly like the subscriber list)
+        var rows = await _subscribers.RowsAsync();
+        var perSite = await rows
+            .GroupBy(r => r.SiteId)
+            .Select(g => new
+            {
+                SiteId = g.Key,
+                Total = g.Count(),
+                Online = g.Count(r => r.Status == SubscriberStatus.Online),
+                Expired = g.Count(r => r.Status == SubscriberStatus.Expired),
+                Suspended = g.Count(r => r.Status == SubscriberStatus.Suspended)
+            })
+            .ToListAsync();
+
+        var visibleSiteIds = sites.Select(s => s.Id).ToList();
+        var nasPerSite = await _db.NasDevices.AsNoTracking()
+            .Where(n => visibleSiteIds.Contains(n.SiteId))
+            .GroupBy(n => n.SiteId)
+            .Select(g => new { SiteId = g.Key, Total = g.Count(), Online = g.Count(n => n.IsOnline) })
+            .ToListAsync();
+
+        var wallets = await _db.SiteWallets.AsNoTracking()
+            .Where(w => visibleSiteIds.Contains(w.SiteId))
+            .ToDictionaryAsync(w => w.SiteId, w => w.Balance);
+
+        var monthRecharge = await (
+            from h in _db.SubscriberPackageHistories.AsNoTracking()
+            join r in rows on h.SubscriberId equals r.Id
+            where h.CreatedAt >= monthStart
+            group new { h, r } by r.SiteId into g
+            select new { SiteId = g.Key, Count = g.Count(), Amount = g.Sum(x => x.h.AmountCharged > 0 ? x.h.AmountCharged : x.h.Price) }
+        ).ToListAsync();
+
+        var siteRows = sites.Select(s =>
+        {
+            var c = perSite.FirstOrDefault(p => p.SiteId == s.Id);
+            var n = nasPerSite.FirstOrDefault(p => p.SiteId == s.Id);
+            var m = monthRecharge.FirstOrDefault(p => p.SiteId == s.Id);
+            return new
+            {
+                s.Id,
+                s.SiteName,
+                s.CompanyName,
+                level = s.SiteLevel,
+                s.ParentSiteId,
+                organizationId = s.ParentOrganisationID,
+                s.IsActive,
+                adminUsername = s.AdminUsername,
+                subscribers = c?.Total ?? 0,
+                online = c?.Online ?? 0,
+                expired = c?.Expired ?? 0,
+                suspended = c?.Suspended ?? 0,
+                nas = n?.Total ?? 0,
+                nasOnline = n?.Online ?? 0,
+                walletBalance = wallets.TryGetValue(s.Id, out var bal) ? bal : (decimal?)null,
+                monthRechargeCount = m?.Count ?? 0,
+                monthRechargeAmount = m?.Amount ?? 0
+            };
+        })
+        .OrderBy(s => s.level).ThenBy(s => s.SiteName)
+        .ToList();
+
+        // Companies (super admin only)
+        object? companies = null;
+        if (_access.IsSuperAdmin)
+        {
+            var orgs = await _db.Organizations.AsNoTracking()
+                .Where(o => o.Level > 0 || o.Type != "SuperAdmin")
+                .Select(o => new
+                {
+                    o.Id, o.Name, o.Code, o.IsActive, o.CreatedAt,
+                    AdminUsername = o.Users.OrderBy(u => u.CreatedAt).Select(u => u.Username).FirstOrDefault()
+                })
+                .ToListAsync();
+
+            companies = orgs.Select(o =>
+            {
+                var own = siteRows.Where(s => s.organizationId == o.Id).ToList();
+                return new
+                {
+                    o.Id,
+                    o.Name,
+                    o.Code,
+                    o.IsActive,
+                    o.CreatedAt,
+                    adminUsername = o.AdminUsername,
+                    l1Sites = own.Count(s => s.level <= 1),
+                    totalSites = own.Count,
+                    subscribers = own.Sum(s => s.subscribers),
+                    online = own.Sum(s => s.online),
+                    expired = own.Sum(s => s.expired),
+                    nas = own.Sum(s => s.nas),
+                    nasOnline = own.Sum(s => s.nasOnline),
+                    monthRechargeAmount = own.Sum(s => s.monthRechargeAmount)
+                };
+            })
+            .OrderByDescending(o => o.subscribers)
+            .ToList();
+        }
+
+        var result = new
+        {
+            generatedAt = now,
+            role = _access.IsSuperAdmin ? "L0" : (await _access.GetOwnSiteAsync()) == null ? "ORG" : "SITE",
+            radiusServer = new
+            {
+                running = RadiusSoftware.API.Services.RadiusServerStatus.Running,
+                startedAt = RadiusSoftware.API.Services.RadiusServerStatus.StartedAt,
+                lastPacketAt = RadiusSoftware.API.Services.RadiusServerStatus.LastPacketAt,
+                packetsReceived = RadiusSoftware.API.Services.RadiusServerStatus.PacketsReceived,
+                authPort = RadiusSoftware.API.Services.RadiusServerStatus.AuthPort,
+                acctPort = RadiusSoftware.API.Services.RadiusServerStatus.AcctPort
+            },
+            totals = new
+            {
+                companies = (companies as System.Collections.IList)?.Count,
+                sites = siteRows.Count,
+                sitesByLevel = siteRows.GroupBy(s => s.level).OrderBy(g => g.Key)
+                    .Select(g => new { level = g.Key, count = g.Count() }),
+                subscribers = siteRows.Sum(s => s.subscribers),
+                online = siteRows.Sum(s => s.online),
+                expired = siteRows.Sum(s => s.expired),
+                nas = siteRows.Sum(s => s.nas),
+                nasOnline = siteRows.Sum(s => s.nasOnline),
+                monthRechargeAmount = siteRows.Sum(s => s.monthRechargeAmount)
+            },
+            companies,
+            sites = siteRows
+        };
+
+        _cache.Set(cacheKey, (object)result, TimeSpan.FromSeconds(20));
+        return Ok(result);
     }
 
     // =========================================================

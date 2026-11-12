@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import apiClient from "../../services/api";
 import { apiError, formatDate, formatMoney } from "../../utils/format";
+import { usePolling } from "../../hooks/usePolling";
 import NasInterfaceGraphs from "./NasInterfaceGraphs";
 import SubscriberListModal from "./SubscriberListModal";
 import { RealtimeTrafficDashboard } from "../RealtimeTrafficDashboard";
@@ -28,7 +29,7 @@ interface CardDef {
 
 const CARDS: CardDef[] = [
   { id: "total", title: "Total Subscribers", icon: "👥", color: "#0ea5e9", value: (s) => s.totalSubscribers, drill: "all" },
-  { id: "online", title: "Online Subscribers", icon: "📡", color: "#0d9488", value: (s) => s.online, drill: "online" },
+  { id: "online", title: "Online Now (RADIUS)", icon: "📡", color: "#0d9488", value: (s) => s.online, drill: "online" },
   { id: "active", title: "Active Subscribers", icon: "✅", color: "#475569", value: (s) => s.active, drill: "active" },
   { id: "activeOffline", title: "Active but Offline", icon: "💤", color: "#64748b", value: (s) => s.activeOffline, drill: "offline" },
   { id: "expiringToday", title: "Expiring Today", icon: "⏳", color: "#f43f5e", value: (s) => s.expiringToday, drill: "expiring-today" },
@@ -78,31 +79,28 @@ const LiveDashboard: React.FC<Props> = ({ level }) => {
   const [error, setError] = useState("");
   const [showConfig, setShowConfig] = useState(false);
   const [drill, setDrill] = useState<{ title: string; status: string } | null>(null);
-  const [now, setNow] = useState(new Date());
 
-  const loadSummary = useCallback(() => {
-    apiClient
-      .get("/Dashboard/summary")
-      .then((res) => {
-        setSummary(res.data);
-        setError("");
-      })
-      .catch((err) => setError(apiError(err, "Unable to load dashboard.")));
-  }, []);
+  const loadSummary = useCallback(
+    () =>
+      apiClient
+        .get("/Dashboard/summary")
+        .then((res) => {
+          setSummary(res.data);
+          setError("");
+        })
+        .catch((err) => setError(apiError(err, "Unable to load dashboard."))),
+    [],
+  );
 
   useEffect(() => {
-    loadSummary();
     apiClient
       .get("/Dashboard/config")
       .then((res) => setWidgets(res.data?.widgets ?? defaultWidgets(level)))
       .catch(() => setWidgets(defaultWidgets(level)));
-    const t = window.setInterval(loadSummary, 30000);
-    const c = window.setInterval(() => setNow(new Date()), 1000);
-    return () => {
-      window.clearInterval(t);
-      window.clearInterval(c);
-    };
-  }, [level, loadSummary]);
+  }, [level]);
+
+  // Refresh cards every 30 s (paused while the tab is hidden)
+  usePolling(loadSummary, 30000);
 
   const has = (id: string) => (widgets ?? []).includes(id);
   const visibleCards = useMemo(() => CARDS.filter((c) => has(c.id)), [widgets]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -112,9 +110,7 @@ const LiveDashboard: React.FC<Props> = ({ level }) => {
       <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
         <h5 className="fw-bold mb-0">Dashboard</h5>
         <div className="d-flex align-items-center gap-2">
-          <span className="badge bg-success-subtle text-success-emphasis border">
-            {now.toLocaleString("en-IN", { day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-          </span>
+          <Clock />
           <button className="btn btn-sm btn-light border" onClick={() => setShowConfig(true)}>
             ⚙ Config
           </button>
@@ -259,16 +255,14 @@ const ExpiringWidget: React.FC<{ onOpen: () => void }> = ({ onOpen }) => {
 
 const AuthLogWidget: React.FC<{ onOpen: () => void }> = ({ onOpen }) => {
   const [rows, setRows] = useState<any[]>([]);
-  useEffect(() => {
-    const load = () =>
+  usePolling(
+    () =>
       apiClient
         .get("/Dashboard/auth-logs", { params: { pageSize: 8 } })
         .then((res) => setRows(res.data?.items ?? []))
-        .catch(() => undefined);
-    load();
-    const t = window.setInterval(load, 20000);
-    return () => window.clearInterval(t);
-  }, []);
+        .catch(() => undefined),
+    20000,
+  );
   return (
     <div className="card border-0 shadow-sm rounded-4 h-100">
       <div className="card-body">
@@ -308,27 +302,42 @@ const AuthLogWidget: React.FC<{ onOpen: () => void }> = ({ onOpen }) => {
 
 const LiveByNasWidget: React.FC = () => {
   const [rows, setRows] = useState<any[]>([]);
-  useEffect(() => {
-    const load = () => apiClient.get("/Dashboard/live-by-nas").then((res) => setRows(res.data ?? [])).catch(() => undefined);
-    load();
-    const t = window.setInterval(load, 30000);
-    return () => window.clearInterval(t);
-  }, []);
+  const [routerCount, setRouterCount] = useState<Record<string, string>>({});
+
+  usePolling(
+    () => apiClient.get("/Dashboard/live-by-nas").then((res) => setRows(res.data ?? [])).catch(() => undefined),
+    30000,
+  );
+
+  const checkRouter = async (id: string) => {
+    setRouterCount((c) => ({ ...c, [id]: "…" }));
+    try {
+      const res = await apiClient.get(`/Nas/ppp-active/${id}`);
+      setRouterCount((c) => ({ ...c, [id]: String(res.data?.routerActive ?? 0) }));
+    } catch (err) {
+      setRouterCount((c) => ({ ...c, [id]: "offline" }));
+    }
+  };
+
   return (
     <div className="card border-0 shadow-sm rounded-4 h-100">
       <div className="card-body">
-        <h6 className="fw-bold mb-2">📶 Live by NAS</h6>
-        <table className="table table-sm small mb-0">
+        <h6 className="fw-bold mb-1">📶 Live users by NAS</h6>
+        <div className="text-muted mb-2" style={{ fontSize: 11 }}>
+          RADIUS = sessions reported by the router through RADIUS accounting. "Check router" asks the router directly.
+        </div>
+        <table className="table table-sm small mb-0 align-middle">
           <thead className="table-light">
             <tr>
               <th>NAS</th>
-              <th className="text-end">Live users</th>
+              <th className="text-end">Live (RADIUS)</th>
+              <th className="text-end">On router</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={2} className="text-muted text-center py-3">
+                <td colSpan={3} className="text-muted text-center py-3">
                   No NAS added.
                 </td>
               </tr>
@@ -339,12 +348,35 @@ const LiveByNasWidget: React.FC = () => {
                   {n.nasName} <span className="text-muted">({n.nasIpAddress})</span>
                 </td>
                 <td className="text-end fw-semibold">{n.liveUsers}</td>
+                <td className="text-end">
+                  {routerCount[n.id] ? (
+                    <span className={routerCount[n.id] === "offline" ? "text-danger" : "fw-semibold"}>{routerCount[n.id]}</span>
+                  ) : (
+                    <button className="btn btn-sm btn-light border py-0" onClick={() => checkRouter(n.id)}>
+                      Check router
+                    </button>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
     </div>
+  );
+};
+
+/** Own small component so the clock does not re-render the whole dashboard every second. */
+const Clock: React.FC = () => {
+  const [now, setNow] = useState(new Date());
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(t);
+  }, []);
+  return (
+    <span className="badge bg-success-subtle text-success-emphasis border">
+      {now.toLocaleString("en-IN", { day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+    </span>
   );
 };
 

@@ -55,9 +55,12 @@ export default function Login() {
       if (rememberMe) {
         localStorage.setItem("rememberLogin", "1");
         localStorage.setItem("rememberedUser", form.email);
+        if (res.data.logoUrl) localStorage.setItem("rememberedLogo", res.data.logoUrl);
+        else localStorage.removeItem("rememberedLogo");
       } else {
         localStorage.removeItem("rememberLogin");
         localStorage.removeItem("rememberedUser");
+        localStorage.removeItem("rememberedLogo");
       }
 
       setSuccessMsg("Login Success");
@@ -146,7 +149,7 @@ export default function Login() {
             {/* Header / Logo */}
             <div className="text-center mb-4">
               <img
-                src="/logo.png"
+                src={(localStorage.getItem("rememberLogin") === "1" && localStorage.getItem("rememberedLogo")) || "/logo.png"}
                 alt="Bharat Radius"
                 className="mb-2"
                 style={{ height: "65px", width: "auto", objectFit: "contain" }}

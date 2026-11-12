@@ -202,3 +202,35 @@ BEGIN
 END $EF$;
 COMMIT;
 
+START TRANSACTION;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112092725_UserOwnLogo') THEN
+    ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "LogoUrl" text;
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112092725_UserOwnLogo') THEN
+
+    UPDATE "Users" u
+    SET "LogoUrl" = o."LogoUrl"
+    FROM "Organizations" o
+    WHERE u."OrganizationId" = o."Id"
+      AND u."LogoUrl" IS NULL
+      AND o."LogoUrl" IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM "Sites" s WHERE s."UserId" = u."Id");
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112092725_UserOwnLogo') THEN
+    INSERT INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+    VALUES ('20261112092725_UserOwnLogo', '10.0.10');
+    END IF;
+END $EF$;
+COMMIT;
+

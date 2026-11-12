@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import apiClient from "../services/api";
+import { currentLevel } from "../utils/format";
 
 interface SidebarProps {
   collapsed: boolean;
@@ -29,11 +30,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, companyLogo, onNavi
   const userStr = localStorage.getItem("user");
   const user = userStr ? JSON.parse(userStr) : null;
   const companyName = user?.companyName || "ISP Portal";
-  const level = user?.isSuperAdmin
-    ? "L0"
-    : typeof user?.orgType === "number"
-      ? `L${user.orgType}`
-      : user?.orgType || "L1";
+  const level = currentLevel();
   const extraMenus = builtInMenus(level).filter(
     (b) => !menus.some((m) => m.route === b.route),
   );

@@ -1,31 +1,42 @@
-import React from "react";
+import React, { Suspense, lazy } from "react";
 import {
   BrowserRouter as Router,
   Routes,
   Route,
   Navigate,
 } from "react-router-dom";
-import BharatRadiusLanding from "./pages/BharatRadiusLanding";
-import  Login  from "./pages/Login";
-import { CompanyManagement } from "./pages/CompanyManagement";
-import { UserManagement } from "./pages/UserManagement";
-import { SitesManagement } from "./pages/SitesManagement";
+import Login from "./pages/Login";
 import { MainLayout } from "./layouts/MainLayout";
-import { Dashboard } from "./pages/Dashboard";
-import { NasManagement } from "./pages/NasManagement";
-import { PackageManagement } from "./pages/PackageManagement";
 
-import SubscriberManagement from "./pages/SubscriberManagement";
-import SubscriberProfile from "./pages/SubscriberProfile";
-import WalletChildSites from "./pages/WalletChildSites";
-import WalletTransactions from "./pages/WalletTransactions";
-import CAF from "./pages/CAF";
-import Reports from "./pages/Reports";
-import RadiusAuthLogs from "./pages/RadiusAuthLogs";
-import GatewaySettings from "./pages/GatewaySettings";
+// Pages are loaded only when opened (smaller first download, faster panel)
+const named = <T extends Record<string, any>>(loader: () => Promise<T>, name: keyof T) =>
+  lazy(() => loader().then((m) => ({ default: m[name] as React.ComponentType<any> })));
+
+const CompanyManagement = named(() => import("./pages/CompanyManagement"), "CompanyManagement");
+const UserManagement = named(() => import("./pages/UserManagement"), "UserManagement");
+const SitesManagement = named(() => import("./pages/SitesManagement"), "SitesManagement");
+const Dashboard = named(() => import("./pages/Dashboard"), "Dashboard");
+const NasManagement = named(() => import("./pages/NasManagement"), "NasManagement");
+const PackageManagement = named(() => import("./pages/PackageManagement"), "PackageManagement");
+const SubscriberManagement = lazy(() => import("./pages/SubscriberManagement"));
+const SubscriberProfile = lazy(() => import("./pages/SubscriberProfile"));
+const WalletChildSites = lazy(() => import("./pages/WalletChildSites"));
+const WalletTransactions = lazy(() => import("./pages/WalletTransactions"));
+const CAF = lazy(() => import("./pages/CAF"));
+const Reports = lazy(() => import("./pages/Reports"));
+const RadiusAuthLogs = lazy(() => import("./pages/RadiusAuthLogs"));
+const GatewaySettings = lazy(() => import("./pages/GatewaySettings"));
+
+const PageLoader = () => (
+  <div className="d-flex justify-content-center align-items-center py-5">
+    <div className="spinner-border text-warning" role="status" />
+  </div>
+);
+
 export const App: React.FC = () => {
   return (
     <Router>
+      <Suspense fallback={<PageLoader />}>
       <Routes>
         {/* =====================================================
             PUBLIC ROUTES
@@ -176,6 +187,7 @@ export const App: React.FC = () => {
           }
         />
       </Routes>
+      </Suspense>
     </Router>
   );
 };

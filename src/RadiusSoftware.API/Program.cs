@@ -47,8 +47,20 @@ builder.Host.UseSerilog();
 builder.Services.AddSignalR();
 
 // Register PostgreSQL DbContext
+// Connection pool limits: keep the API from using up all PostgreSQL connections
+// (live + UAT + pgAdmin + python share the same server, default max_connections = 100).
+// Values already written in the connection string always win.
+var npgsql = new Npgsql.NpgsqlConnectionStringBuilder(builder.Configuration.GetConnectionString("DefaultConnection"));
+var rawConn = builder.Configuration.GetConnectionString("DefaultConnection") ?? "";
+bool Has(string key) => rawConn.Contains(key, StringComparison.OrdinalIgnoreCase);
+if (!Has("Maximum Pool Size") && !Has("Max Pool Size")) npgsql.MaxPoolSize = 40;
+if (!Has("Timeout=") ) npgsql.Timeout = 15;
+if (!Has("Command Timeout")) npgsql.CommandTimeout = 30;
+if (!Has("Keepalive")) npgsql.KeepAlive = 30;
+if (!Has("Connection Idle Lifetime")) npgsql.ConnectionIdleLifetime = 60;
+
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection"),
+    options.UseNpgsql(npgsql.ConnectionString,
     b => b.MigrationsAssembly("RadiusSoftware.Infrastructure")));
 
 // Register JWT Authentication Configuration

@@ -44,6 +44,10 @@ Migration kya karti hai:
   Ab expiry RADIUS server date se check karta hai, isliye aise users wapas ON kiye jaate hain
   (woh tab tak **Expired** hi rahenge jab tak recharge na ho).
 - PPPoE username par unique index (case-insensitive)
+- `UserOwnLogo`: har user ka apna logo (`Users.LogoUrl`). Company admin ka purana logo uske account par copy ho jaata hai.
+
+Agar migration "Duplicate PPPoE usernames found" bataye to `Database/remove-duplicate-pppoe-usernames.sql`
+chalaiye (har duplicate ka sabse naya record rakhta hai, history shift karta hai, backup table banata hai).
 
 ## 4. Backend config (`src/RadiusSoftware.API/appsettings.json`)
 

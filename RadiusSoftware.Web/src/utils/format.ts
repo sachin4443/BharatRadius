@@ -50,10 +50,13 @@ export const currentUser = (): any => {
   }
 };
 
-/** "L0".."L3" (L0 = super admin). */
+/**
+ * "L0".."L4". L0 is ONLY the super admin. A company (organization) admin is
+ * reported as L0 / "ClientPortal" by older data, so it is treated as L1 here.
+ */
 export const currentLevel = (): string => {
   const u = currentUser();
   if (u?.isSuperAdmin) return "L0";
-  const t = u?.orgType;
-  return typeof t === "number" ? `L${t}` : t || "L1";
+  const t = typeof u?.orgType === "number" ? `L${u.orgType}` : u?.orgType || "L1";
+  return t === "L0" || t === "ClientPortal" ? "L1" : t;
 };
