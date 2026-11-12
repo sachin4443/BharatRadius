@@ -56,7 +56,9 @@ public class WalletTopupController : ControllerBase
         return Ok(new
         {
             enabled = cfg != null && !string.IsNullOrWhiteSpace(cfg.ApiKey),
-            reason = cfg == null ? "Online payment is not set up yet. Please ask your admin to add Razorpay keys." : null,
+            reason = cfg == null
+                ? "Online payment is not set up yet. Your company (L1) admin has to add the Razorpay keys in SMS & Payment Gateway → Payment Gateway."
+                : null,
             provider = cfg?.Provider,
             mode = cfg?.Mode,
             siteName = site.SiteName,
