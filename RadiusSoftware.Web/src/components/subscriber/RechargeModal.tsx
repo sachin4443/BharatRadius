@@ -1,6 +1,9 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { Suspense, lazy, useEffect, useMemo, useState } from "react";
+
 import apiClient from "../../services/api";
 import { apiError, formatDate, formatMoney } from "../../utils/format";
+
+const AddMoneyModal = lazy(() => import("../wallet/AddMoneyModal"));
 
 interface Props {
   subscriber: {
@@ -61,6 +64,8 @@ const RechargeModal: React.FC<Props> = ({ subscriber, onClose, onDone }) => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [showAddMoney, setShowAddMoney] = useState(false);
+  const [previewKey, setPreviewKey] = useState(0);
   // One id per recharge attempt: the server processes it only once
   const [requestId] = useState(() =>
     typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -103,7 +108,7 @@ const RechargeModal: React.FC<Props> = ({ subscriber, onClose, onDone }) => {
     return () => {
       cancelled = true;
     };
-  }, [packageId, quantity, startFrom, subscriber.id]);
+  }, [packageId, quantity, startFrom, subscriber.id, previewKey]);
 
   const selected = useMemo(() => packages.find((p) => p.id === packageId), [packages, packageId]);
 
@@ -297,8 +302,11 @@ const RechargeModal: React.FC<Props> = ({ subscriber, onClose, onDone }) => {
                 />
 
                 {preview && !preview.sufficientBalance && (
-                  <div className="alert alert-warning py-2 small mb-2">
-                    Wallet balance is not enough for this recharge.
+                  <div className="alert alert-warning py-2 small mb-2 d-flex justify-content-between align-items-center gap-2 flex-wrap">
+                    <span>Wallet balance is not enough for this recharge.</span>
+                    <button type="button" className="btn btn-sm btn-brand rounded-pill" onClick={() => setShowAddMoney(true)}>
+                      + Add money
+                    </button>
                   </div>
                 )}
                 {error && <div className="alert alert-danger py-2 small mb-0">{error}</div>}
@@ -322,6 +330,15 @@ const RechargeModal: React.FC<Props> = ({ subscriber, onClose, onDone }) => {
           )}
         </div>
       </div>
+      {showAddMoney && (
+        <Suspense fallback={null}>
+          <AddMoneyModal
+            suggestedAmount={preview ? Math.max(100, preview.amount - preview.walletBalance) : undefined}
+            onClose={() => setShowAddMoney(false)}
+            onDone={() => setPreviewKey((k) => k + 1)}
+          />
+        </Suspense>
+      )}
     </div>
   );
 };

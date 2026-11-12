@@ -188,7 +188,7 @@ export const LiveRadiusTerminal: React.FC = () => {
   }, [logs, isOpen]);
 
   return (
-    <div style={{ position: "fixed", bottom: "20px", right: "20px", zIndex: 9999 }}>
+    <div style={{ position: "fixed", bottom: "20px", right: "20px", zIndex: 1035 /* above the page, below popups (1050+) and the mobile menu */ }}>
       {/* 🚀 Floating Trigger Button */}
       {!isOpen && (
         <button

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, Suspense } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
 import { Sidebar } from "../components/Sidebar";
 import ImpersonationBar from "../components/ImpersonationBar";
+import WalletChip from "../components/wallet/WalletChip";
 import apiClient from "../services/api";
 
 export const MainLayout: React.FC = () => {
@@ -193,7 +194,8 @@ export const MainLayout: React.FC = () => {
   </span>
 </div>
             {/* Right side container: Back to Admin button + Profile Dropdown */}
-            <div className="ms-auto d-flex align-items-center gap-3">
+            <div className="ms-auto d-flex align-items-center gap-2 gap-md-3">
+              <WalletChip />
               
               {/* 🔙 Impersonation Back Button */}
               {/* "Back to Admin" lives in the ImpersonationBar below the navbar */}

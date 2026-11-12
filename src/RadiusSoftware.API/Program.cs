@@ -152,6 +152,8 @@ if (JobEnabled("AutoConfigureNas"))
 }
 builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddHttpClient("sms", c => c.Timeout = TimeSpan.FromSeconds(20));
+builder.Services.AddHttpClient("razorpay", c => c.Timeout = TimeSpan.FromSeconds(20));
+builder.Services.AddScoped<RadiusSoftware.API.Services.Payments.IRazorpayService, RadiusSoftware.API.Services.Payments.RazorpayService>();
 builder.Services.AddScoped<RadiusSoftware.API.Services.Sms.ISmsService, RadiusSoftware.API.Services.Sms.SmsService>();
 if (JobEnabled("SmsReminders"))
 {
