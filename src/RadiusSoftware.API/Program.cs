@@ -36,9 +36,24 @@ builder.Services.AddSwaggerGen(options =>
         });
 });
 // 1. Serilog Setup (Logs ko File aur Console me save karne ke liye)
+// Production friendly logging: our own messages (RADIUS, jobs) at Information,
+// framework noise (every SQL query, every HTTP request) only at Warning.
+// Log files: one per day, max 100 MB each, last 30 days kept.
+// "Serilog:EfSql": true in appsettings shows SQL again for troubleshooting.
+var showSql = builder.Configuration.GetValue("Serilog:EfSql", false);
 Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Information()
+    .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
+    .MinimumLevel.Override("System", Serilog.Events.LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.Hosting.Lifetime", Serilog.Events.LogEventLevel.Information)
+    .MinimumLevel.Override("Microsoft.EntityFrameworkCore.Database.Command",
+        showSql ? Serilog.Events.LogEventLevel.Information : Serilog.Events.LogEventLevel.Warning)
     .WriteTo.Console()
-    .WriteTo.File("Logs/radius-log-.txt", rollingInterval: RollingInterval.Day)
+    .WriteTo.File("Logs/radius-log-.txt",
+        rollingInterval: RollingInterval.Day,
+        retainedFileCountLimit: 30,
+        fileSizeLimitBytes: 100L * 1024 * 1024,
+        rollOnFileSizeLimit: true)
     .CreateLogger();
 
 builder.Host.UseSerilog();
