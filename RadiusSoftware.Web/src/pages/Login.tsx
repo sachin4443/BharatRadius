@@ -5,8 +5,12 @@ import { useNavigate } from "react-router-dom";
 export default function Login() {
   const navigate = useNavigate();
 
+  // "Remember Me": the login id is kept on this device and the session lasts 7 days
+  const [rememberMe, setRememberMe] = useState<boolean>(
+    () => localStorage.getItem("rememberLogin") === "1"
+  );
   const [form, setForm] = useState({
-    email: "",
+    email: localStorage.getItem("rememberLogin") === "1" ? localStorage.getItem("rememberedUser") || "" : "",
     password: "",
   });
   const [showPassword, setShowPassword] = useState(false);
@@ -24,16 +28,17 @@ export default function Login() {
     confirmPassword: "",
   });
 
+  // Already logged in with a valid (not expired) token -> skip the login page
   useEffect(() => {
     const token = localStorage.getItem("token");
-    const user = JSON.parse(localStorage.getItem("user") || "{}");
-
-    if (token && user && user.userType) {
-      if (user.userType === "Admin") {
-        navigate("/admin-dashboard");
-      } else {
+    if (!token) return;
+    try {
+      const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+      if (payload?.exp && payload.exp * 1000 > Date.now() + 60_000) {
         navigate("/dashboard");
       }
+    } catch {
+      // invalid token -> stay on login
     }
   }, [navigate]);
 
@@ -44,10 +49,16 @@ export default function Login() {
     setSuccessMsg("");
     setLoading(true);
     try {
-      const res = await API.post("/auth/login", form);
-
+      const res = await API.post("/auth/login", { ...form, rememberMe });
       localStorage.setItem("token", res.data.token);
       localStorage.setItem("user", JSON.stringify(res.data));
+      if (rememberMe) {
+        localStorage.setItem("rememberLogin", "1");
+        localStorage.setItem("rememberedUser", form.email);
+      } else {
+        localStorage.removeItem("rememberLogin");
+        localStorage.removeItem("rememberedUser");
+      }
 
       setSuccessMsg("Login Success");
 
@@ -224,6 +235,8 @@ export default function Login() {
                     className="form-check-input mt-0 shadow-none border-secondary"
                     type="checkbox"
                     id="remember"
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
                     style={{ cursor: "pointer", width: "16px", height: "16px" }}
                   />
                   <label className="form-check-label small text-secondary pt-1" htmlFor="remember" style={{ cursor: "pointer" }}>

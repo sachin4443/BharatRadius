@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import apiClient from "../services/api";
@@ -7,6 +7,8 @@ import SubscriberConnectionButton from "../components/subscriber/SubscriberConne
 import SubscriberLiveModal from "../components/subscriber/SubscriberLiveModal";
 import SubscriberStatusBadge from "../components/subscriber/SubscriberStatusBadge";
 import SubscriberExcelImport from "../components/subscriber/SubscriberExcelImport";
+import RechargeModal from "../components/subscriber/RechargeModal";
+import { daysUntil, formatDate, saveBlob } from "../utils/format";
 
 // ============================================================
 // TYPES
@@ -57,7 +59,35 @@ interface Subscriber {
   isOnline?: boolean;
   ipAddress?: string;
   uptime?: string;
+  // from /Subscribers/paged
+  status?: string;
+  packageName?: string | null;
+  nasName?: string | null;
+  siteName?: string | null;
+  lastAuthReason?: string | null;
 }
+
+interface StatusCounts {
+  total: number;
+  online: number;
+  active: number;
+  offline: number;
+  expired: number;
+  suspended: number;
+  disabled: number;
+  wrongPassword: number;
+}
+
+const emptyCounts: StatusCounts = {
+  total: 0,
+  online: 0,
+  active: 0,
+  offline: 0,
+  expired: 0,
+  suspended: 0,
+  disabled: 0,
+  wrongPassword: 0,
+};
 
 interface Site {
   id: string;
@@ -174,13 +204,7 @@ const SubscriberManagement: React.FC = () => {
 
   const [subscribers, setSubscribers] = useState<Subscriber[]>([]);
 
-const [liveSubscriberIds, setLiveSubscriberIds] = useState<Set<string>>(
-  new Set()
-);
 
-const [connectionErrors, setConnectionErrors] = useState<Set<string>>(
-  new Set()
-);
   const [sites, setSites] = useState<Site[]>([]);
 
   const [routers, setRouters] = useState<Nas[]>([]);
@@ -221,6 +245,13 @@ const [connectionErrors, setConnectionErrors] = useState<Set<string>>(
   // ==========================================================
 
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [totalRows, setTotalRows] = useState(0);
+  const [counts, setCounts] = useState<StatusCounts>(emptyCounts);
+  const [rechargeFor, setRechargeFor] = useState<Subscriber | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const [statusFilter, setStatusFilter] = useState("all");
 
@@ -246,8 +277,7 @@ const [connectionErrors, setConnectionErrors] = useState<Set<string>>(
   const userLevel = user?.level || user?.orgType || "L1";
   const orgType = typeof userLevel === "number" ? `L${userLevel}` : userLevel;
   useEffect(() => {
-    fetchData(true);
-
+    fetchData(true).finally(() => setInitialised(true));
     const handleImport = () => {
       fetchData(false);
     };
@@ -263,69 +293,108 @@ const [connectionErrors, setConnectionErrors] = useState<Set<string>>(
   // FETCH DATA
   // ==========================================================
 
+  // Filters sent to the server (search / status / router / paging)
+  const listParams = () => ({
+    page,
+    pageSize,
+    search: debouncedSearch || undefined,
+    status: statusFilter !== "all" ? statusFilter : undefined,
+    nasId: routerFilter !== "all" ? routerFilter : undefined,
+  });
+
+  const fetchSubscribers = async () => {
+    const res = await apiClient.get("/Subscribers/paged", { params: listParams() });
+    setSubscribers(res.data?.items ?? []);
+    setTotalRows(res.data?.total ?? 0);
+    setCounts(res.data?.counts ?? emptyCounts);
+  };
+
+  const fetchMasters = async () => {
+    const [siteRes, nasRes, packageRes] = await Promise.all([
+      apiClient.get("/Sites/list"),
+      apiClient.get("/Nas/list"),
+      apiClient.get("/Packages/list"),
+    ]);
+
+    const siteData = Array.isArray(siteRes.data) ? siteRes.data : (siteRes.data?.data ?? []);
+    const nasData = Array.isArray(nasRes.data) ? nasRes.data : (nasRes.data?.data ?? []);
+    const packageData = Array.isArray(packageRes.data) ? packageRes.data : (packageRes.data?.data ?? []);
+
+    setSites(siteData);
+    setRouters(nasData);
+    setPackages(packageData);
+
+    // Automatically assign current available site
+    if (siteData.length > 0) {
+      setFormData((prev) => {
+        const exists = siteData.some((x: Site) => String(x.id) === String(prev.siteId));
+        return exists ? prev : { ...prev, siteId: String(siteData[0].id) };
+      });
+    }
+  };
+
   const fetchData = async (firstLoad = false) => {
     try {
       if (firstLoad) {
         setPageLoading(true);
+        await Promise.all([fetchSubscribers(), fetchMasters()]);
       } else {
         setRefreshing(true);
-      }
-
-      const [subscriberRes, siteRes, nasRes, packageRes] = await Promise.all([
-        apiClient.get("/Subscribers/list"),
-        apiClient.get("/Sites/list"),
-        apiClient.get("/Nas/list"),
-        apiClient.get("/Packages/list"),
-      ]);
-
-      const subscriberData = Array.isArray(subscriberRes.data)
-        ? subscriberRes.data
-        : (subscriberRes.data?.data ?? []);
-
-      const siteData = Array.isArray(siteRes.data)
-        ? siteRes.data
-        : (siteRes.data?.data ?? []);
-
-      const nasData = Array.isArray(nasRes.data)
-        ? nasRes.data
-        : (nasRes.data?.data ?? []);
-
-      const packageData = Array.isArray(packageRes.data)
-        ? packageRes.data
-        : (packageRes.data?.data ?? []);
-
-      setSubscribers(subscriberData);
-
-      setSites(siteData);
-      setRouters(nasData);
-      setPackages(packageData);
-
-      // Automatically assign current available site
-      if (siteData.length > 0) {
-        setFormData((prev) => {
-          const exists = siteData.some(
-            (x: Site) => String(x.id) === String(prev.siteId),
-          );
-
-          if (exists) {
-            return prev;
-          }
-
-          return {
-            ...prev,
-            siteId: String(siteData[0].id),
-          };
-        });
+        await fetchSubscribers();
       }
     } catch (error: any) {
       console.error("Subscriber data loading error:", error);
-
-      alert(
-        error?.response?.data?.message || "Unable to load subscriber data.",
-      );
+      if (firstLoad) {
+        alert(error?.response?.data?.message || "Unable to load subscriber data.");
+      }
     } finally {
       setPageLoading(false);
       setRefreshing(false);
+    }
+  };
+
+  // Search box: wait until typing stops
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(1);
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [search]);
+
+  // Reload when filters / page change (first load handled below)
+  const [initialised, setInitialised] = useState(false);
+  useEffect(() => {
+    if (!initialised) return;
+    fetchData(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, pageSize, debouncedSearch, statusFilter, routerFilter]);
+
+  // Silent refresh every 30 seconds (online / offline status)
+  useEffect(() => {
+    if (!initialised) return;
+    const t = window.setInterval(() => {
+      fetchSubscribers().catch(() => undefined);
+    }, 30000);
+    return () => window.clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialised, page, pageSize, debouncedSearch, statusFilter, routerFilter]);
+
+  const changeStatusFilter = (value: string) => {
+    setStatusFilter(value);
+    setPage(1);
+  };
+
+  const handleExport = async () => {
+    try {
+      setExporting(true);
+      const { page: _p, pageSize: _s, ...filters } = listParams();
+      const res = await apiClient.get("/Subscribers/export", { params: filters, responseType: "blob" });
+      saveBlob(res.data, `subscribers-${new Date().toISOString().substring(0, 10)}.csv`);
+    } catch (error: any) {
+      alert(error?.response?.data?.message || "Export failed.");
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -413,40 +482,16 @@ const [connectionErrors, setConnectionErrors] = useState<Set<string>>(
   // EDIT
   // ==========================================================
 
-  const handleSubscriberStatus = (
-  subscriberId: string,
-  status: any
-) => {
-  const isOnline = status?.isOnline === true;
-  const isError = status?.errorConnection === true;
-
-  // LIVE USERS
-  setLiveSubscriberIds((prev) => {
-    const next = new Set(prev);
-
-    if (isOnline) {
-      next.add(String(subscriberId));
-    } else {
-      next.delete(String(subscriberId));
+ const handleEdit = async (row: Subscriber) => {
+    // The list only has the columns it shows, so load the full record
+    let subscriber: Subscriber = row;
+    try {
+      const res = await apiClient.get(`/Subscribers/${row.id}`);
+      subscriber = { ...row, ...(res.data?.data ?? res.data) };
+    } catch (error: any) {
+      alert(error?.response?.data?.message || "Unable to load subscriber details.");
+      return;
     }
-
-    return next;
-  });
-
-  // WRONG PASSWORD / CONNECTION ERROR
-  setConnectionErrors((prev) => {
-    const next = new Set(prev);
-
-    if (isError) {
-      next.add(String(subscriberId));
-    } else {
-      next.delete(String(subscriberId));
-    }
-
-    return next;
-  });
-};
- const handleEdit = (subscriber: Subscriber) => {
     setIsEdit(true);
     setActiveTab("basic");
     setEnablePPPoEEdit(false);
@@ -623,65 +668,10 @@ const [connectionErrors, setConnectionErrors] = useState<Set<string>>(
   // FILTER
   // ==========================================================
 
-  const filteredSubscribers = useMemo(() => {
-    const term = search.trim().toLowerCase();
-
-    return subscribers.filter((subscriber) => {
-      const router = getRouter(subscriber);
-
-      const matchesSearch =
-        !term ||
-        (subscriber.fullName || "").toLowerCase().includes(term) ||
-        (subscriber.mobile || "").toLowerCase().includes(term) ||
-        (subscriber.pppoeUsername || "").toLowerCase().includes(term) ||
-        (subscriber.staticIp || "").toLowerCase().includes(term) ||
-        (subscriber.macAddress || "").toLowerCase().includes(term) ||
-        (router?.nasName || "").toLowerCase().includes(term);
-
-      let matchesStatus = true;
-
-      if (statusFilter === "active") {
-        matchesStatus = subscriber.isActive === true;
-      }
-
-      if (statusFilter === "inactive") {
-        matchesStatus = subscriber.isActive === false;
-      }
-
-      if (statusFilter === "enabled") {
-        matchesStatus = subscriber.connectionEnabled === true;
-      }
-
-      if (statusFilter === "disabled") {
-        matchesStatus = subscriber.connectionEnabled !== true;
-      }
-
-      const matchesRouter =
-        routerFilter === "all" ||
-        String(subscriber.nasId || "") === String(routerFilter);
-
-      return matchesSearch && matchesStatus && matchesRouter;
-    });
-  }, [subscribers, search, statusFilter, routerFilter, routers]);
-
-  // ==========================================================
-  // COUNTERS
-  // ==========================================================
-
-  const total = subscribers.length;
-
-  const active = subscribers.filter((x) => x.isActive === true).length;
-
-  const enabled = subscribers.filter(
-    (x) => x.connectionEnabled === true,
-  ).length;
-  const connectionOff = subscribers.filter(
-  (x) => x.connectionEnabled !== true,
-).length;
-
-  const inactive = subscribers.filter((x) => x.isActive === false).length;
-  // Live count check (subscriber object ya uske properties ke base par)
-  const liveCount = liveSubscriberIds.size;
+  // Search / filter / paging is done by the server (/Subscribers/paged)
+  const filteredSubscribers = subscribers;
+  const total = counts.total;
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
   // ==========================================================
   // CURRENT SITE
   // ==========================================================
@@ -795,62 +785,21 @@ const [connectionErrors, setConnectionErrors] = useState<Set<string>>(
     SUMMARY
 ======================================================= */}
 
-<div className="row g-3 mb-4">
-
-  {/* TOTAL */}
-  <SummaryCard
-    title="Total Records"
-    value={total}
-    icon="👥"
-    color="#4f46e5"
-    background="#eef2ff"
-  />
-
-  {/* LIVE */}
-  <SummaryCard
-    title="Live Users"
-    value={liveCount}
-    icon="📡"
-    color="#059669"
-    background="#ecfdf5"
-  />
-
-  {/* ACTIVE */}
-  <SummaryCard
-    title="Active Users"
-    value={active}
-    icon="✓"
-    color="#16a34a"
-    background="#f0fdf4"
-  />
-
-  {/* ALLOW CONNECTION */}
-  <SummaryCard
-    title="Allow Connection"
-    value={enabled}
-    icon="🔌"
-    color="#7c3aed"
-    background="#f5f3ff"
-  />
-
-  {/* CONNECTION OFF */}
-  <SummaryCard
-    title="Connection Off"
-    value={connectionOff}
-    icon="⛔"
-    color="#64748b"
-    background="#f1f5f9"
-  />
-
-  {/* INACTIVE */}
-  <SummaryCard
-    title="Inactive Users"
-    value={inactive}
-    icon="⚠"
-    color="#dc2626"
-    background="#fef2f2"
-  />
-
+<div className="row g-2 g-md-3 mb-4">
+  <SummaryCard title="Total" value={total} icon="👥" color="#4f46e5" background="#eef2ff"
+    active={statusFilter === "all"} onClick={() => changeStatusFilter("all")} />
+  <SummaryCard title="Online" value={counts.online} icon="📡" color="#059669" background="#ecfdf5"
+    active={statusFilter === "online"} onClick={() => changeStatusFilter("online")} />
+  <SummaryCard title="Active (Offline)" value={counts.offline} icon="✓" color="#16a34a" background="#f0fdf4"
+    active={statusFilter === "offline"} onClick={() => changeStatusFilter("offline")} />
+  <SummaryCard title="Expired" value={counts.expired} icon="⏰" color="#dc2626" background="#fef2f2"
+    active={statusFilter === "expired"} onClick={() => changeStatusFilter("expired")} />
+  <SummaryCard title="Suspended" value={counts.suspended} icon="⛔" color="#b45309" background="#fffbeb"
+    active={statusFilter === "suspended"} onClick={() => changeStatusFilter("suspended")} />
+  <SummaryCard title="Disabled" value={counts.disabled} icon="🔌" color="#64748b" background="#f1f5f9"
+    active={statusFilter === "disabled"} onClick={() => changeStatusFilter("disabled")} />
+  <SummaryCard title="Wrong Password" value={counts.wrongPassword} icon="🔑" color="#7c3aed" background="#f5f3ff"
+    active={statusFilter === "wrongpassword"} onClick={() => changeStatusFilter("wrongpassword")} />
 </div>
       {/* ======================================================
           FILTER
@@ -858,7 +807,7 @@ const [connectionErrors, setConnectionErrors] = useState<Set<string>>(
 
       <div className="bg-white border rounded-4 shadow-sm p-3 mb-4">
         <div className="row g-3">
-          <div className="col-xl-5 col-lg-6">
+          <div className="col-12 col-lg-5">
             <div className="input-group">
               <span className="input-group-text bg-white border-end-0">🔎</span>
 
@@ -871,29 +820,36 @@ const [connectionErrors, setConnectionErrors] = useState<Set<string>>(
             </div>
           </div>
 
-          <div className="col-xl-3 col-lg-3">
+          <div className="col-6 col-lg-3">
             <select
               className="form-select"
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
+              onChange={(e) => changeStatusFilter(e.target.value)}
             >
               <option value="all">All Status</option>
-
-              <option value="active">Active</option>
-
-              <option value="inactive">Inactive</option>
-
-              <option value="enabled">Connection Enabled</option>
-
-              <option value="disabled">Connection Disabled</option>
+              <option value="online">Online</option>
+              <option value="active">Active (Online + Offline)</option>
+              <option value="offline">Active but Offline</option>
+              <option value="expired">Expired</option>
+              <option value="expiring-today">Expiring Today</option>
+              <option value="expiring-tomorrow">Expiring Tomorrow</option>
+              <option value="expiring-week">Expiring in 7 Days</option>
+              <option value="expired-month">Expired This Month</option>
+              <option value="suspended">Suspended</option>
+              <option value="disabled">Disabled</option>
+              <option value="wrongpassword">Wrong Password</option>
+              <option value="no-package">No Package</option>
             </select>
           </div>
 
-          <div className="col-xl-3 col-lg-2">
+          <div className="col-6 col-lg-3">
             <select
               className="form-select"
               value={routerFilter}
-              onChange={(e) => setRouterFilter(e.target.value)}
+              onChange={(e) => {
+                setRouterFilter(e.target.value);
+                setPage(1);
+              }}
             >
               <option value="all">All Routers</option>
 
@@ -905,7 +861,7 @@ const [connectionErrors, setConnectionErrors] = useState<Set<string>>(
             </select>
           </div>
 
-          <div className="col-xl-1 col-lg-1">
+          <div className="col-12 col-lg-1">
             <button
               type="button"
               className="btn btn-light border w-100"
@@ -925,13 +881,40 @@ const [connectionErrors, setConnectionErrors] = useState<Set<string>>(
 
       <div className="bg-white border rounded-4 shadow-sm overflow-hidden">
         <div className="p-4 border-bottom">
-          <div className="d-flex justify-content-between align-items-center">
+          <div className="d-flex justify-content-between align-items-center flex-wrap gap-2">
             <div>
               <h6 className="fw-bold text-brand mb-1">Subscriber Accounts</h6>
 
               <small className="text-muted">
-                Showing {filteredSubscribers.length} of {total}
+                {totalRows === 0
+                  ? "No records"
+                  : `Showing ${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, totalRows)} of ${totalRows}`}
               </small>
+            </div>
+            <div className="d-flex gap-2 align-items-center">
+              <select
+                className="form-select form-select-sm"
+                style={{ width: 110 }}
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setPage(1);
+                }}
+              >
+                {[10, 25, 50, 100, 200].map((n) => (
+                  <option key={n} value={n}>
+                    {n} rows
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="btn btn-sm btn-light border text-nowrap"
+                onClick={handleExport}
+                disabled={exporting}
+              >
+                {exporting ? "..." : "⬇ Export"}
+              </button>
             </div>
           </div>
         </div>
@@ -947,12 +930,12 @@ const [connectionErrors, setConnectionErrors] = useState<Set<string>>(
                 <th className="ps-4 py-3">Subscriber</th>
 
 
-                <th>Router</th>
+                <th className="d-none d-lg-table-cell">Router</th>
 
                 <th>Package</th>
 
-                <th>IP / MAC</th>
-
+                <th>Expiry Date</th>
+                <th className="d-none d-xl-table-cell">IP / MAC</th>
                 <th>Status</th>
 
                 <th className="text-end pe-4">Actions</th>
@@ -1018,7 +1001,7 @@ const [connectionErrors, setConnectionErrors] = useState<Set<string>>(
                             <div className="fw-bold">{subscriber.fullName}</div>
 
                             <div className="small text-muted">
-                              {subscriber.ppPoEUsername}
+                              {subscriber.pppoeUsername || subscriber.ppPoEUsername}
                             </div>
 
                             <div className="small text-muted">
@@ -1032,8 +1015,7 @@ const [connectionErrors, setConnectionErrors] = useState<Set<string>>(
 
                       
                       {/* ROUTER */}
-
-                      <td>
+                      <td className="d-none d-lg-table-cell">
                         {router ? (
                           <>
                             <div className="fw-semibold">{router.nasName}</div>
@@ -1068,14 +1050,18 @@ const [connectionErrors, setConnectionErrors] = useState<Set<string>>(
                               {pkg.downloadMbps}/{pkg.uploadMbps} Mbps
                             </small>
                           </>
+                        ) : subscriber.packageName ? (
+                          <div className="fw-semibold">{subscriber.packageName}</div>
                         ) : (
                           <span className="text-muted">—</span>
                         )}
                       </td>
-
-                      {/* IP */}
-
+                      {/* EXPIRY */}
                       <td>
+                        <ExpiryCell value={subscriber.expireDate} />
+                      </td>
+                      {/* IP */}
+                      <td className="d-none d-xl-table-cell">
                         <div className="font-monospace fw-semibold">
                           {subscriber.staticIp || "Dynamic"}
                         </div>
@@ -1090,27 +1076,32 @@ const [connectionErrors, setConnectionErrors] = useState<Set<string>>(
                       {/* STATUS */}
 
                       <td>
-                        <SubscriberStatusBadge
-  subscriber={subscriber}
-  online={liveSubscriberIds.has(String(subscriber.id))}
-  errorConnection={connectionErrors.has(String(subscriber.id))}
-/>
+                        <SubscriberStatusBadge subscriber={subscriber} />
+                        {subscriber.lastAuthReason &&
+                          subscriber.status === "Active" &&
+                          (subscriber as any).lastAuthResult === "REJECT" && (
+                            <div className="text-muted mt-1" style={{ fontSize: 11 }}>
+                              Last login: {subscriber.lastAuthReason}
+                            </div>
+                          )}
                       </td>
 
                       {/* ACTIONS */}
 
                       <td className="text-end pe-4">
                         <div className="d-flex justify-content-end gap-2 flex-wrap">
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-brand rounded-pill px-3"
+                            onClick={() => setRechargeFor(subscriber)}
+                          >
+                            ⚡ Recharge
+                          </button>
                           <SubscriberConnectionButton
-  subscriber={subscriber}
-  onChanged={() => fetchData(false)}
-  onStatusChange={(status) =>
-    handleSubscriberStatus(
-      subscriber.id,
-      status
-    )
-  }
-/>
+                            subscriber={subscriber}
+                            livePolling={false}
+                            onChanged={() => fetchData(false)}
+                          />
 
                           <button
                             type="button"
@@ -1144,7 +1135,7 @@ const [connectionErrors, setConnectionErrors] = useState<Set<string>>(
                             onClick={() => handleDelete(subscriber.id)}
                           >
                             🗑
-                          </button> */}s
+                          </button> */}
                         </div>
                       </td>
                     </tr>
@@ -1154,7 +1145,40 @@ const [connectionErrors, setConnectionErrors] = useState<Set<string>>(
             </tbody>
           </table>
         </div>
+        {totalPages > 1 && (
+          <div className="d-flex justify-content-between align-items-center p-3 border-top flex-wrap gap-2">
+            <small className="text-muted">
+              Page {page} of {totalPages}
+            </small>
+            <div className="btn-group btn-group-sm">
+              <button className="btn btn-light border" disabled={page <= 1} onClick={() => setPage(1)}>
+                «
+              </button>
+              <button className="btn btn-light border" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+                ‹ Prev
+              </button>
+              <button className="btn btn-light border" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>
+                Next ›
+              </button>
+              <button
+                className="btn btn-light border"
+                disabled={page >= totalPages}
+                onClick={() => setPage(totalPages)}
+              >
+                »
+              </button>
+            </div>
+          </div>
+        )}
       </div>
+
+      {rechargeFor && (
+        <RechargeModal
+          subscriber={rechargeFor}
+          onClose={() => setRechargeFor(null)}
+          onDone={() => fetchData(false)}
+        />
+      )}
 
       {/* ======================================================
           ADD / EDIT MODAL
@@ -2059,72 +2083,82 @@ const SummaryCard = ({
   icon,
   color = "#4f46e5",
   background = "#eef2ff",
+  active = false,
+  onClick,
 }: {
   title: string;
   value: number;
   icon: string;
   color?: string;
   background?: string;
+  active?: boolean;
+  onClick?: () => void;
 }) => {
   return (
-    <div className="col-xl-2 col-lg-4 col-md-6 col-6">
+    <div className="col-6 col-md-4 col-xl">
       <div
+        role={onClick ? "button" : undefined}
+        onClick={onClick}
         className="bg-white h-100"
         style={{
-          border: "1px solid #e5e7eb",
+          border: active ? `2px solid ${color}` : "1px solid #e5e7eb",
           borderRadius: 16,
           boxShadow: "0 3px 12px rgba(15, 23, 42, 0.06)",
           transition: "all 0.2s ease",
+          cursor: onClick ? "pointer" : "default",
         }}
       >
-        <div className="p-3 p-lg-4">
+        <div className="p-3">
           <div className="d-flex justify-content-between align-items-start gap-2">
-
-            {/* TEXT */}
             <div className="min-w-0">
-
               <div
-                className="small fw-semibold mb-2"
-                style={{
-                  color: "#64748b",
-                  fontSize: 12,
-                  whiteSpace: "nowrap",
-                }}
+                className="small fw-semibold mb-2 text-truncate"
+                style={{ color: "#64748b", fontSize: 12 }}
               >
                 {title}
               </div>
-
-              <div
-                className="fw-bold"
-                style={{
-                  color,
-                  fontSize: 28,
-                  lineHeight: 1,
-                }}
-              >
+              <div className="fw-bold" style={{ color, fontSize: 26, lineHeight: 1 }}>
                 {value}
               </div>
-
             </div>
-
-            {/* ICON */}
             <div
-              className="d-flex align-items-center justify-content-center flex-shrink-0"
+              className="d-none d-sm-flex align-items-center justify-content-center flex-shrink-0"
               style={{
-                width: 44,
-                height: 44,
-                borderRadius: 14,
+                width: 40,
+                height: 40,
+                borderRadius: 12,
                 background,
                 color,
-                fontSize: 19,
+                fontSize: 18,
                 fontWeight: 600,
               }}
             >
               {icon}
             </div>
-
           </div>
         </div>
+      </div>
+    </div>
+  );
+};
+
+/** Expiry date with colour: red = expired, orange = within 7 days, green = later. */
+const ExpiryCell = ({ value }: { value?: string | null }) => {
+  if (!value) return <span className="text-muted">—</span>;
+  const days = daysUntil(value) ?? 0;
+  const expired = new Date(value).getTime() <= Date.now();
+  const cls = expired
+    ? "bg-danger-subtle text-danger-emphasis border-danger-subtle"
+    : days <= 7
+      ? "bg-warning-subtle text-warning-emphasis border-warning-subtle"
+      : "bg-success-subtle text-success-emphasis border-success-subtle";
+  return (
+    <div>
+      <span className={`badge border ${cls}`} style={{ fontSize: 12 }}>
+        {formatDate(value, true)}
+      </span>
+      <div className="text-muted mt-1" style={{ fontSize: 11 }}>
+        {expired ? `Expired ${Math.abs(days)} day(s) ago` : days <= 0 ? "Expires today" : `${days} day(s) left`}
       </div>
     </div>
   );

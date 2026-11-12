@@ -26,6 +26,10 @@ export const RealtimeTrafficDashboard: React.FC = () => {
   const [nasList, setNasList] = useState<NasDevice[]>([]);
   const [selectedNasId, setSelectedNasId] = useState<string>("");
   const [selectedNasIp, setSelectedNasIp] = useState<string>("");
+  // Router interface to monitor (loaded from the router)
+  const [interfaces, setInterfaces] = useState<{ name: string; type: string; running: boolean }[]>([]);
+  const [selectedInterface, setSelectedInterface] = useState<string>("");
+  const [interfaceError, setInterfaceError] = useState<string>("");
 
   const [currentRx, setCurrentRx] = useState<number>(0);
   const [currentTx, setCurrentTx] = useState<number>(0);
@@ -43,6 +47,28 @@ export const RealtimeTrafficDashboard: React.FC = () => {
 
   // Fix useRef type
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const selectedInterfaceRef = useRef<string>("");
+  selectedInterfaceRef.current = selectedInterface;
+
+  // Load interfaces whenever the NAS changes
+  useEffect(() => {
+    if (!selectedNasId) return;
+    setInterfaces([]);
+    setInterfaceError("");
+    apiClient
+      .get(`/Nas/interfaces/${selectedNasId}`)
+      .then((res) => {
+        const list = res.data?.interfaces ?? [];
+        setInterfaces(list);
+        const saved: string[] = res.data?.dashboardInterfaces ?? [];
+        const first = saved[0] || list.find((i: any) => i.running)?.name || list[0]?.name || "";
+        setSelectedInterface(first);
+      })
+      .catch((err) => {
+        setInterfaceError(err?.response?.data?.message || "Router not reachable");
+        setSelectedInterface("");
+      });
+  }, [selectedNasId]);
 
   // --- Core Functions ---
   const stopPolling = () => {
@@ -65,7 +91,9 @@ export const RealtimeTrafficDashboard: React.FC = () => {
 
   const fetchTraffic = async (nasId: string) => {
     try {
-      const res = await apiClient.post(`/Nas/live-traffic/${nasId}`);
+      const res = await apiClient.post(`/Nas/live-traffic/${nasId}`, null, {
+        params: selectedInterfaceRef.current ? { interface: selectedInterfaceRef.current } : undefined,
+      });
       if (res.data.success) {
         const uploadVal = res.data.rx; 
         const downloadVal = res.data.tx;
@@ -227,6 +255,26 @@ export const RealtimeTrafficDashboard: React.FC = () => {
             {nasList.map((nas) => (
               <option key={nas.id} value={nas.id}>
                 {nas.nasName} ({nas.nasIpAddress})
+              </option>
+            ))}
+          </select>
+
+          <select
+            className="form-select form-select-sm bg-light text-dark border shadow-none"
+            style={{ width: "190px", cursor: "pointer" }}
+            value={selectedInterface}
+            onChange={(e) => {
+              setSelectedInterface(e.target.value);
+              resetDashboard();
+            }}
+            title={interfaceError || "Interface"}
+          >
+            {interfaces.length === 0 && (
+              <option value="">{interfaceError ? "Interfaces unavailable" : "Loading interfaces..."}</option>
+            )}
+            {interfaces.map((i) => (
+              <option key={i.name} value={i.name}>
+                {i.running ? "🟢" : "⚪"} {i.name} {i.type ? `(${i.type})` : ""}
               </option>
             ))}
           </select>

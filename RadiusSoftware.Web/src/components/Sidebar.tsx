@@ -5,9 +5,20 @@ import apiClient from "../services/api";
 interface SidebarProps {
   collapsed: boolean;
   companyLogo?: string;
+  /** Called after a link is clicked (closes the mobile drawer). */
+  onNavigate?: () => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ collapsed, companyLogo }) => {
+/** Built-in pages that every panel user gets (not stored in the Menus table). */
+const builtInMenus = (level: string) => [
+  { route: "/reports", title: "Reports", icon: "📈" },
+  { route: "/radius-auth-logs", title: "RADIUS Auth Log", icon: "🔐" },
+  ...(level === "L0" || level === "L1"
+    ? [{ route: "/gateway-settings", title: "SMS & Payment Gateway", icon: "💳" }]
+    : []),
+];
+
+export const Sidebar: React.FC<SidebarProps> = ({ collapsed, companyLogo, onNavigate }) => {
   const [menus, setMenus] = useState<any[]>([]);
   // Track which parent menus are expanded/open
   const [openMenus, setOpenMenus] = useState<{ [key: string]: boolean }>({});
@@ -18,6 +29,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, companyLogo }) => {
   const userStr = localStorage.getItem("user");
   const user = userStr ? JSON.parse(userStr) : null;
   const companyName = user?.companyName || "ISP Portal";
+  const level = user?.isSuperAdmin
+    ? "L0"
+    : typeof user?.orgType === "number"
+      ? `L${user.orgType}`
+      : user?.orgType || "L1";
+  const extraMenus = builtInMenus(level).filter(
+    (b) => !menus.some((m) => m.route === b.route),
+  );
 
   const getFullImageUrl = (url: string) => {
     if (!url) return "";
@@ -170,6 +189,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, companyLogo }) => {
                 // Normal standalone menu link
                 <Link
                   to={parent.route}
+                  onClick={onNavigate}
                   className={`list-group-item list-group-item-action py-2 px-3 border-0 rounded d-flex align-items-center gap-3 text-dark ${
                     location.pathname === parent.route
                       ? "text-white shadow-sm fw-semibold"
@@ -203,6 +223,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, companyLogo }) => {
                       <Link
                         key={sub.id}
                         to={sub.route}
+                        onClick={onNavigate}
                         className={`list-group-item list-group-item-action py-1.5 px-3 border-0 rounded small d-flex align-items-center gap-2 ${
                           isSubActive ? "fw-bold" : "text-muted bg-transparent"
                         }`}
@@ -231,6 +252,31 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, companyLogo }) => {
                 </div>
               )}
             </div>
+          );
+        })}
+
+        {/* Reports & tools */}
+        {!collapsed && (
+          <div className="text-uppercase text-muted fw-semibold px-3 mt-3 mb-1" style={{ fontSize: 10, letterSpacing: 1 }}>
+            Reports & Tools
+          </div>
+        )}
+        {extraMenus.map((item) => {
+          const active = location.pathname === item.route;
+          return (
+            <Link
+              key={item.route}
+              to={item.route}
+              onClick={onNavigate}
+              className={`list-group-item list-group-item-action py-2 px-3 border-0 rounded d-flex align-items-center gap-3 mb-1 ${
+                active ? "text-white shadow-sm fw-semibold" : "bg-transparent text-secondary"
+              }`}
+              style={active ? { background: "linear-gradient(135deg, #f97316 0%, #ea580c 100%)" } : undefined}
+              title={collapsed ? item.title : ""}
+            >
+              <span style={{ fontSize: "17px" }}>{item.icon}</span>
+              {!collapsed && <span className="small text-truncate">{item.title}</span>}
+            </Link>
           );
         })}
 

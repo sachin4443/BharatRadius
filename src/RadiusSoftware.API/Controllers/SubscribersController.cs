@@ -921,7 +921,12 @@ public class SubscribersController : ControllerBase
 
                 IsCurrent = x.IsCurrent,
 
-                Comment = x.Comment
+                Comment = x.Comment,
+                StartDate = x.StartDate ?? x.AssignedAt,
+                EndDate = x.EndDate ?? x.EndedAt,
+                Quantity = x.Quantity < 1 ? 1 : x.Quantity,
+                AmountCharged = x.AmountCharged > 0 ? x.AmountCharged : x.Price,
+                CreatedByName = x.CreatedByName
             })
             .ToListAsync();
 
@@ -1078,7 +1083,9 @@ public class SubscribersController : ControllerBase
         // 3. WALLET BALANCE & DEDUCTION CHECK
         // =========================================================
 
+        // AsNoTracking: the row is read again with a lock inside the transaction
         var wallet = await _context.SiteWallets
+            .AsNoTracking()
             .FirstOrDefaultAsync(w => w.SiteId == site.Id);
 
         if (wallet == null)
@@ -1136,6 +1143,24 @@ public class SubscribersController : ControllerBase
         // START DATABASE TRANSACTION (Ensuring Atomicity)
         // =========================================================
         await using var dbTransaction = await _context.Database.BeginTransactionAsync();
+
+        // Lock the wallet row and check the balance again inside the transaction
+        // (prevents double deduction on double click / parallel requests)
+        var lockedSiteId = site.Id;
+        wallet = await _context.SiteWallets
+            .FromSqlInterpolated($@"SELECT * FROM ""SiteWallets"" WHERE ""SiteId"" = {lockedSiteId} FOR UPDATE")
+            .FirstAsync();
+        if (wallet.Balance < packagePrice)
+        {
+            await dbTransaction.RollbackAsync();
+            return BadRequest(new
+            {
+                success = false,
+                message = "Insufficient wallet balance to change/assign package.",
+                requiredAmount = packagePrice,
+                availableBalance = wallet.Balance
+            });
+        }
 
         try
         {

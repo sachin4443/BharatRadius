@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
+import { API_BASE_URL } from "../services/api";
 
 const WalletBalanceCard: React.FC = () => {
 
@@ -20,7 +21,7 @@ const WalletBalanceCard: React.FC = () => {
 
         const response =
           await axios.get(
-            "https://api.bharatradius.com/api/Wallet/balance",
+            `${API_BASE_URL}/Wallet/balance`,
             {
               headers: {
                 Authorization:

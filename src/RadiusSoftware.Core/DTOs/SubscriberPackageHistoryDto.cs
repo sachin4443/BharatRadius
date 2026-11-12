@@ -1,4 +1,4 @@
-﻿namespace RadiusSoftware.Core.DTOs;
+namespace RadiusSoftware.Core.DTOs;
 
 public class SubscriberPackageHistoryDto
 {
@@ -27,4 +27,11 @@ public class SubscriberPackageHistoryDto
     public bool IsCurrent { get; set; }
 
     public string? Comment { get; set; }
+
+    // Recharge period
+    public DateTime? StartDate { get; set; }
+    public DateTime? EndDate { get; set; }
+    public int Quantity { get; set; } = 1;
+    public decimal AmountCharged { get; set; }
+    public string? CreatedByName { get; set; }
 }

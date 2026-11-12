@@ -21,6 +21,7 @@ import SubscriberHistoryTab from "../components/subscriber/SubscriberHistoryTab"
 import SubscriberPackageHistoryTab from "../components/subscriber/SubscriberPackageHistoryTab";
 import SubscriberPackageCard from "../components/subscriber/SubscriberPackageCard";
 import SubscriberDocumentsTab from "../components/subscriber/SubscriberDocumentsTab";
+import RechargeModal from "../components/subscriber/RechargeModal";
 
 
 type Tab =
@@ -40,6 +41,7 @@ const SubscriberProfile: React.FC = () => {
   const navigate = useNavigate();
 
   const [subscriber, setSubscriber] = useState<any>(null);
+  const [showRecharge, setShowRecharge] = useState(false);
   const [liveData, setLiveData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [liveLoading, setLiveLoading] = useState(false);
@@ -319,6 +321,13 @@ const SubscriberProfile: React.FC = () => {
 
       {/* ACTION BUTTONS */}
       <div className="d-flex gap-2 flex-wrap align-items-center pb-2">
+        <button
+          type="button"
+          className="btn btn-brand rounded-pill px-3 fw-semibold shadow-sm"
+          onClick={() => setShowRecharge(true)}
+        >
+          ⚡ Recharge
+        </button>
         <SubscriberConnectionButton
           subscriber={subscriber}
           onChanged={handleConnectionChanged}
@@ -336,6 +345,18 @@ const SubscriberProfile: React.FC = () => {
     </div>
   </div>
 </div>
+{showRecharge && (
+  <RechargeModal
+    subscriber={{
+      ...subscriber,
+      pppoeUsername: subscriber.pppoeUsername || subscriber.ppPoEUsername,
+    }}
+    onClose={() => setShowRecharge(false)}
+    onDone={async () => {
+      await loadSubscriber();
+    }}
+  />
+)}
 {/* ACTIVE PACKAGE */}
 <SubscriberPackageCard
   subscriber={subscriber}

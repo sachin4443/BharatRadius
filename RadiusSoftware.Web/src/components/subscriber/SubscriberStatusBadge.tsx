@@ -11,6 +11,28 @@ const SubscriberStatusBadge: React.FC<Props> = ({
   online = false,
   errorConnection = false,
 }) => {
+  // ==========================================================
+  // 0. STATUS CALCULATED BY THE SERVER (subscriber list)
+  // ==========================================================
+
+  const serverStatus: string | undefined = subscriber?.status;
+  if (serverStatus) {
+    const map: Record<string, { label: string; cls: string }> = {
+      Online: { label: "● Online", cls: "bg-success" },
+      Active: { label: "Active", cls: "bg-primary-subtle text-primary-emphasis border border-primary-subtle" },
+      Expired: { label: "Expired", cls: "bg-danger" },
+      Suspended: { label: "Suspended", cls: "bg-warning text-dark" },
+      Disabled: { label: "Disabled", cls: "bg-secondary" },
+      WrongPassword: { label: "⚠ Wrong Password", cls: "bg-warning-subtle text-warning-emphasis border border-warning" },
+    };
+    const item = map[serverStatus] ?? { label: serverStatus, cls: "bg-light text-dark border" };
+    return (
+      <span className={`badge rounded-pill px-3 py-2 ${item.cls}`} style={{ fontSize: "11px" }}>
+        {item.label}
+      </span>
+    );
+  }
+
 
   // ==========================================================
   // 1. WRONG CONNECTION
