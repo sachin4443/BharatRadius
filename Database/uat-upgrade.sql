@@ -3,91 +3,24 @@
 DO $EF$
 BEGIN
     IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    ALTER TABLE "Users" ADD "DashboardConfigJson" text;
-    END IF;
-END $EF$;
 
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    ALTER TABLE "Subscribers" ADD "LastAuthAt" timestamp with time zone;
-    END IF;
-END $EF$;
+    ALTER TABLE "Users" ADD COLUMN IF NOT EXISTS "DashboardConfigJson" text;
 
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    ALTER TABLE "Subscribers" ADD "LastAuthReason" character varying(200);
-    END IF;
-END $EF$;
+    ALTER TABLE "Subscribers" ADD COLUMN IF NOT EXISTS "LastAuthAt" timestamp with time zone;
+    ALTER TABLE "Subscribers" ADD COLUMN IF NOT EXISTS "LastAuthReason" character varying(200);
+    ALTER TABLE "Subscribers" ADD COLUMN IF NOT EXISTS "LastAuthResult" character varying(20);
 
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    ALTER TABLE "Subscribers" ADD "LastAuthResult" character varying(20);
-    END IF;
-END $EF$;
+    ALTER TABLE "SubscriberPackageHistories" ADD COLUMN IF NOT EXISTS "AmountCharged" numeric NOT NULL DEFAULT 0.0;
+    ALTER TABLE "SubscriberPackageHistories" ADD COLUMN IF NOT EXISTS "CreatedByName" text;
+    ALTER TABLE "SubscriberPackageHistories" ADD COLUMN IF NOT EXISTS "CreatedByUserId" uuid;
+    ALTER TABLE "SubscriberPackageHistories" ADD COLUMN IF NOT EXISTS "EndDate" timestamp with time zone;
+    ALTER TABLE "SubscriberPackageHistories" ADD COLUMN IF NOT EXISTS "Quantity" integer NOT NULL DEFAULT 0;
+    ALTER TABLE "SubscriberPackageHistories" ADD COLUMN IF NOT EXISTS "SiteId" uuid;
+    ALTER TABLE "SubscriberPackageHistories" ADD COLUMN IF NOT EXISTS "StartDate" timestamp with time zone;
 
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    ALTER TABLE "SubscriberPackageHistories" ADD "AmountCharged" numeric NOT NULL DEFAULT 0.0;
-    END IF;
-END $EF$;
+    ALTER TABLE "NasDevices" ADD COLUMN IF NOT EXISTS "DashboardInterfaces" text;
 
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    ALTER TABLE "SubscriberPackageHistories" ADD "CreatedByName" text;
-    END IF;
-END $EF$;
-
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    ALTER TABLE "SubscriberPackageHistories" ADD "CreatedByUserId" uuid;
-    END IF;
-END $EF$;
-
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    ALTER TABLE "SubscriberPackageHistories" ADD "EndDate" timestamp with time zone;
-    END IF;
-END $EF$;
-
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    ALTER TABLE "SubscriberPackageHistories" ADD "Quantity" integer NOT NULL DEFAULT 0;
-    END IF;
-END $EF$;
-
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    ALTER TABLE "SubscriberPackageHistories" ADD "SiteId" uuid;
-    END IF;
-END $EF$;
-
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    ALTER TABLE "SubscriberPackageHistories" ADD "StartDate" timestamp with time zone;
-    END IF;
-END $EF$;
-
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    ALTER TABLE "NasDevices" ADD "DashboardInterfaces" text;
-    END IF;
-END $EF$;
-
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    CREATE TABLE "PaymentGatewayConfigs" (
+    CREATE TABLE IF NOT EXISTS "PaymentGatewayConfigs" (
         "Id" uuid NOT NULL,
         "OrganizationId" uuid NOT NULL,
         "SiteId" uuid,
@@ -105,13 +38,8 @@ BEGIN
         "UpdatedAt" timestamp with time zone NOT NULL,
         CONSTRAINT "PK_PaymentGatewayConfigs" PRIMARY KEY ("Id")
     );
-    END IF;
-END $EF$;
 
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    CREATE TABLE "SmsGatewayConfigs" (
+    CREATE TABLE IF NOT EXISTS "SmsGatewayConfigs" (
         "Id" uuid NOT NULL,
         "OrganizationId" uuid NOT NULL,
         "SiteId" uuid,
@@ -138,13 +66,8 @@ BEGIN
         "UpdatedAt" timestamp with time zone NOT NULL,
         CONSTRAINT "PK_SmsGatewayConfigs" PRIMARY KEY ("Id")
     );
-    END IF;
-END $EF$;
 
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    CREATE TABLE "SmsLogs" (
+    CREATE TABLE IF NOT EXISTS "SmsLogs" (
         "Id" uuid NOT NULL,
         "SiteId" uuid,
         "SubscriberId" uuid,
@@ -156,90 +79,20 @@ BEGIN
         "CreatedAt" timestamp with time zone NOT NULL,
         CONSTRAINT "PK_SmsLogs" PRIMARY KEY ("Id")
     );
-    END IF;
-END $EF$;
 
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    CREATE INDEX "IX_Subscribers_ExpireDate" ON "Subscribers" ("ExpireDate");
-    END IF;
-END $EF$;
+    CREATE INDEX IF NOT EXISTS "IX_Subscribers_ExpireDate" ON "Subscribers" ("ExpireDate");
+    CREATE INDEX IF NOT EXISTS "IX_Subscribers_PPPoEUsername" ON "Subscribers" ("PPPoEUsername");
+    CREATE INDEX IF NOT EXISTS "IX_Subscribers_SiteId" ON "Subscribers" ("SiteId");
+    CREATE INDEX IF NOT EXISTS "IX_SubscriberPackageHistories_SiteId_CreatedAt" ON "SubscriberPackageHistories" ("SiteId", "CreatedAt");
+    CREATE INDEX IF NOT EXISTS "IX_SubscriberPackageHistories_SubscriberId" ON "SubscriberPackageHistories" ("SubscriberId");
+    CREATE INDEX IF NOT EXISTS "IX_RadiusAuthenticationLogs_CreatedAt" ON "RadiusAuthenticationLogs" ("CreatedAt");
+    CREATE INDEX IF NOT EXISTS "IX_RadiusAuthenticationLogs_SubscriberId" ON "RadiusAuthenticationLogs" ("SubscriberId");
+    CREATE INDEX IF NOT EXISTS "IX_RadiusAccountingSessions_SubscriberId_IsActive" ON "RadiusAccountingSessions" ("SubscriberId", "IsActive");
+    CREATE INDEX IF NOT EXISTS "IX_PaymentGatewayConfigs_OrganizationId_SiteId" ON "PaymentGatewayConfigs" ("OrganizationId", "SiteId");
+    CREATE INDEX IF NOT EXISTS "IX_SmsGatewayConfigs_OrganizationId_SiteId" ON "SmsGatewayConfigs" ("OrganizationId", "SiteId");
+    CREATE INDEX IF NOT EXISTS "IX_SmsLogs_CreatedAt" ON "SmsLogs" ("CreatedAt");
+    CREATE INDEX IF NOT EXISTS "IX_SmsLogs_SubscriberId" ON "SmsLogs" ("SubscriberId");
 
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    CREATE INDEX "IX_Subscribers_PPPoEUsername" ON "Subscribers" ("PPPoEUsername");
-    END IF;
-END $EF$;
-
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    CREATE INDEX "IX_Subscribers_SiteId" ON "Subscribers" ("SiteId");
-    END IF;
-END $EF$;
-
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    CREATE INDEX "IX_SubscriberPackageHistories_SiteId_CreatedAt" ON "SubscriberPackageHistories" ("SiteId", "CreatedAt");
-    END IF;
-END $EF$;
-
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    CREATE INDEX "IX_SubscriberPackageHistories_SubscriberId" ON "SubscriberPackageHistories" ("SubscriberId");
-    END IF;
-END $EF$;
-
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    CREATE INDEX "IX_RadiusAuthenticationLogs_CreatedAt" ON "RadiusAuthenticationLogs" ("CreatedAt");
-    END IF;
-END $EF$;
-
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    CREATE INDEX "IX_RadiusAuthenticationLogs_SubscriberId" ON "RadiusAuthenticationLogs" ("SubscriberId");
-    END IF;
-END $EF$;
-
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    CREATE INDEX "IX_RadiusAccountingSessions_SubscriberId_IsActive" ON "RadiusAccountingSessions" ("SubscriberId", "IsActive");
-    END IF;
-END $EF$;
-
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    CREATE INDEX "IX_PaymentGatewayConfigs_OrganizationId_SiteId" ON "PaymentGatewayConfigs" ("OrganizationId", "SiteId");
-    END IF;
-END $EF$;
-
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    CREATE INDEX "IX_SmsGatewayConfigs_OrganizationId_SiteId" ON "SmsGatewayConfigs" ("OrganizationId", "SiteId");
-    END IF;
-END $EF$;
-
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    CREATE INDEX "IX_SmsLogs_CreatedAt" ON "SmsLogs" ("CreatedAt");
-    END IF;
-END $EF$;
-
-DO $EF$
-BEGIN
-    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20261112072328_UatEnhancements_RechargeSmsPaymentDashboard') THEN
-    CREATE INDEX "IX_SmsLogs_SubscriberId" ON "SmsLogs" ("SubscriberId");
     END IF;
 END $EF$;
 

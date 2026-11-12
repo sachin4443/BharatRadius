@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -11,219 +11,99 @@ namespace RadiusSoftware.Infrastructure.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.AddColumn<string>(
-                name: "DashboardConfigJson",
-                table: "Users",
-                type: "text",
-                nullable: true);
+            // Written with IF NOT EXISTS so the migration also works on databases
+            // where some of these columns / indexes were already created by hand
+            // (e.g. IX_Subscribers_SiteId), and can safely be run again.
+            migrationBuilder.Sql(@"
+ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""DashboardConfigJson"" text;
 
-            migrationBuilder.AddColumn<DateTime>(
-                name: "LastAuthAt",
-                table: "Subscribers",
-                type: "timestamp with time zone",
-                nullable: true);
+ALTER TABLE ""Subscribers"" ADD COLUMN IF NOT EXISTS ""LastAuthAt"" timestamp with time zone;
+ALTER TABLE ""Subscribers"" ADD COLUMN IF NOT EXISTS ""LastAuthReason"" character varying(200);
+ALTER TABLE ""Subscribers"" ADD COLUMN IF NOT EXISTS ""LastAuthResult"" character varying(20);
 
-            migrationBuilder.AddColumn<string>(
-                name: "LastAuthReason",
-                table: "Subscribers",
-                type: "character varying(200)",
-                maxLength: 200,
-                nullable: true);
+ALTER TABLE ""SubscriberPackageHistories"" ADD COLUMN IF NOT EXISTS ""AmountCharged"" numeric NOT NULL DEFAULT 0.0;
+ALTER TABLE ""SubscriberPackageHistories"" ADD COLUMN IF NOT EXISTS ""CreatedByName"" text;
+ALTER TABLE ""SubscriberPackageHistories"" ADD COLUMN IF NOT EXISTS ""CreatedByUserId"" uuid;
+ALTER TABLE ""SubscriberPackageHistories"" ADD COLUMN IF NOT EXISTS ""EndDate"" timestamp with time zone;
+ALTER TABLE ""SubscriberPackageHistories"" ADD COLUMN IF NOT EXISTS ""Quantity"" integer NOT NULL DEFAULT 0;
+ALTER TABLE ""SubscriberPackageHistories"" ADD COLUMN IF NOT EXISTS ""SiteId"" uuid;
+ALTER TABLE ""SubscriberPackageHistories"" ADD COLUMN IF NOT EXISTS ""StartDate"" timestamp with time zone;
 
-            migrationBuilder.AddColumn<string>(
-                name: "LastAuthResult",
-                table: "Subscribers",
-                type: "character varying(20)",
-                maxLength: 20,
-                nullable: true);
+ALTER TABLE ""NasDevices"" ADD COLUMN IF NOT EXISTS ""DashboardInterfaces"" text;
 
-            migrationBuilder.AddColumn<decimal>(
-                name: "AmountCharged",
-                table: "SubscriberPackageHistories",
-                type: "numeric",
-                nullable: false,
-                defaultValue: 0m);
+CREATE TABLE IF NOT EXISTS ""PaymentGatewayConfigs"" (
+    ""Id"" uuid NOT NULL,
+    ""OrganizationId"" uuid NOT NULL,
+    ""SiteId"" uuid,
+    ""Provider"" character varying(50) NOT NULL,
+    ""DisplayName"" character varying(100) NOT NULL,
+    ""Mode"" character varying(10) NOT NULL,
+    ""MerchantId"" character varying(200),
+    ""ApiKey"" character varying(500),
+    ""ApiSecret"" character varying(500),
+    ""SaltOrWebhookSecret"" character varying(500),
+    ""CallbackUrl"" character varying(500),
+    ""IsActive"" boolean NOT NULL,
+    ""IsDefault"" boolean NOT NULL,
+    ""CreatedAt"" timestamp with time zone NOT NULL,
+    ""UpdatedAt"" timestamp with time zone NOT NULL,
+    CONSTRAINT ""PK_PaymentGatewayConfigs"" PRIMARY KEY (""Id"")
+);
 
-            migrationBuilder.AddColumn<string>(
-                name: "CreatedByName",
-                table: "SubscriberPackageHistories",
-                type: "text",
-                nullable: true);
+CREATE TABLE IF NOT EXISTS ""SmsGatewayConfigs"" (
+    ""Id"" uuid NOT NULL,
+    ""OrganizationId"" uuid NOT NULL,
+    ""SiteId"" uuid,
+    ""ProviderName"" character varying(100) NOT NULL,
+    ""ApiUrl"" character varying(1000) NOT NULL,
+    ""HttpMethod"" character varying(10) NOT NULL,
+    ""PostBodyTemplate"" text,
+    ""ContentType"" character varying(100),
+    ""ApiKey"" character varying(500),
+    ""SenderId"" character varying(50),
+    ""SuccessKeyword"" character varying(200),
+    ""SendOnRecharge"" boolean NOT NULL,
+    ""SendExpiryReminder"" boolean NOT NULL,
+    ""ReminderDaysBefore"" integer NOT NULL,
+    ""SendOnExpiry"" boolean NOT NULL,
+    ""RechargeTemplate"" character varying(1000) NOT NULL,
+    ""ReminderTemplate"" character varying(1000) NOT NULL,
+    ""ExpiredTemplate"" character varying(1000) NOT NULL,
+    ""RechargeTemplateId"" character varying(50),
+    ""ReminderTemplateId"" character varying(50),
+    ""ExpiredTemplateId"" character varying(50),
+    ""IsActive"" boolean NOT NULL,
+    ""CreatedAt"" timestamp with time zone NOT NULL,
+    ""UpdatedAt"" timestamp with time zone NOT NULL,
+    CONSTRAINT ""PK_SmsGatewayConfigs"" PRIMARY KEY (""Id"")
+);
 
-            migrationBuilder.AddColumn<Guid>(
-                name: "CreatedByUserId",
-                table: "SubscriberPackageHistories",
-                type: "uuid",
-                nullable: true);
+CREATE TABLE IF NOT EXISTS ""SmsLogs"" (
+    ""Id"" uuid NOT NULL,
+    ""SiteId"" uuid,
+    ""SubscriberId"" uuid,
+    ""Mobile"" character varying(20) NOT NULL,
+    ""Message"" character varying(1000) NOT NULL,
+    ""Purpose"" character varying(20) NOT NULL,
+    ""Status"" character varying(20) NOT NULL,
+    ""ProviderResponse"" character varying(1000),
+    ""CreatedAt"" timestamp with time zone NOT NULL,
+    CONSTRAINT ""PK_SmsLogs"" PRIMARY KEY (""Id"")
+);
 
-            migrationBuilder.AddColumn<DateTime>(
-                name: "EndDate",
-                table: "SubscriberPackageHistories",
-                type: "timestamp with time zone",
-                nullable: true);
-
-            migrationBuilder.AddColumn<int>(
-                name: "Quantity",
-                table: "SubscriberPackageHistories",
-                type: "integer",
-                nullable: false,
-                defaultValue: 0);
-
-            migrationBuilder.AddColumn<Guid>(
-                name: "SiteId",
-                table: "SubscriberPackageHistories",
-                type: "uuid",
-                nullable: true);
-
-            migrationBuilder.AddColumn<DateTime>(
-                name: "StartDate",
-                table: "SubscriberPackageHistories",
-                type: "timestamp with time zone",
-                nullable: true);
-
-            migrationBuilder.AddColumn<string>(
-                name: "DashboardInterfaces",
-                table: "NasDevices",
-                type: "text",
-                nullable: true);
-
-            migrationBuilder.CreateTable(
-                name: "PaymentGatewayConfigs",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "uuid", nullable: false),
-                    OrganizationId = table.Column<Guid>(type: "uuid", nullable: false),
-                    SiteId = table.Column<Guid>(type: "uuid", nullable: true),
-                    Provider = table.Column<string>(type: "character varying(50)", maxLength: 50, nullable: false),
-                    DisplayName = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: false),
-                    Mode = table.Column<string>(type: "character varying(10)", maxLength: 10, nullable: false),
-                    MerchantId = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: true),
-                    ApiKey = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: true),
-                    ApiSecret = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: true),
-                    SaltOrWebhookSecret = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: true),
-                    CallbackUrl = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: true),
-                    IsActive = table.Column<bool>(type: "boolean", nullable: false),
-                    IsDefault = table.Column<bool>(type: "boolean", nullable: false),
-                    CreatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    UpdatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_PaymentGatewayConfigs", x => x.Id);
-                });
-
-            migrationBuilder.CreateTable(
-                name: "SmsGatewayConfigs",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "uuid", nullable: false),
-                    OrganizationId = table.Column<Guid>(type: "uuid", nullable: false),
-                    SiteId = table.Column<Guid>(type: "uuid", nullable: true),
-                    ProviderName = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: false),
-                    ApiUrl = table.Column<string>(type: "character varying(1000)", maxLength: 1000, nullable: false),
-                    HttpMethod = table.Column<string>(type: "character varying(10)", maxLength: 10, nullable: false),
-                    PostBodyTemplate = table.Column<string>(type: "text", nullable: true),
-                    ContentType = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: true),
-                    ApiKey = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: true),
-                    SenderId = table.Column<string>(type: "character varying(50)", maxLength: 50, nullable: true),
-                    SuccessKeyword = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: true),
-                    SendOnRecharge = table.Column<bool>(type: "boolean", nullable: false),
-                    SendExpiryReminder = table.Column<bool>(type: "boolean", nullable: false),
-                    ReminderDaysBefore = table.Column<int>(type: "integer", nullable: false),
-                    SendOnExpiry = table.Column<bool>(type: "boolean", nullable: false),
-                    RechargeTemplate = table.Column<string>(type: "character varying(1000)", maxLength: 1000, nullable: false),
-                    ReminderTemplate = table.Column<string>(type: "character varying(1000)", maxLength: 1000, nullable: false),
-                    ExpiredTemplate = table.Column<string>(type: "character varying(1000)", maxLength: 1000, nullable: false),
-                    RechargeTemplateId = table.Column<string>(type: "character varying(50)", maxLength: 50, nullable: true),
-                    ReminderTemplateId = table.Column<string>(type: "character varying(50)", maxLength: 50, nullable: true),
-                    ExpiredTemplateId = table.Column<string>(type: "character varying(50)", maxLength: 50, nullable: true),
-                    IsActive = table.Column<bool>(type: "boolean", nullable: false),
-                    CreatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    UpdatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_SmsGatewayConfigs", x => x.Id);
-                });
-
-            migrationBuilder.CreateTable(
-                name: "SmsLogs",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "uuid", nullable: false),
-                    SiteId = table.Column<Guid>(type: "uuid", nullable: true),
-                    SubscriberId = table.Column<Guid>(type: "uuid", nullable: true),
-                    Mobile = table.Column<string>(type: "character varying(20)", maxLength: 20, nullable: false),
-                    Message = table.Column<string>(type: "character varying(1000)", maxLength: 1000, nullable: false),
-                    Purpose = table.Column<string>(type: "character varying(20)", maxLength: 20, nullable: false),
-                    Status = table.Column<string>(type: "character varying(20)", maxLength: 20, nullable: false),
-                    ProviderResponse = table.Column<string>(type: "character varying(1000)", maxLength: 1000, nullable: true),
-                    CreatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_SmsLogs", x => x.Id);
-                });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_Subscribers_ExpireDate",
-                table: "Subscribers",
-                column: "ExpireDate");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_Subscribers_PPPoEUsername",
-                table: "Subscribers",
-                column: "PPPoEUsername");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_Subscribers_SiteId",
-                table: "Subscribers",
-                column: "SiteId");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_SubscriberPackageHistories_SiteId_CreatedAt",
-                table: "SubscriberPackageHistories",
-                columns: new[] { "SiteId", "CreatedAt" });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_SubscriberPackageHistories_SubscriberId",
-                table: "SubscriberPackageHistories",
-                column: "SubscriberId");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_RadiusAuthenticationLogs_CreatedAt",
-                table: "RadiusAuthenticationLogs",
-                column: "CreatedAt");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_RadiusAuthenticationLogs_SubscriberId",
-                table: "RadiusAuthenticationLogs",
-                column: "SubscriberId");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_RadiusAccountingSessions_SubscriberId_IsActive",
-                table: "RadiusAccountingSessions",
-                columns: new[] { "SubscriberId", "IsActive" });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_PaymentGatewayConfigs_OrganizationId_SiteId",
-                table: "PaymentGatewayConfigs",
-                columns: new[] { "OrganizationId", "SiteId" });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_SmsGatewayConfigs_OrganizationId_SiteId",
-                table: "SmsGatewayConfigs",
-                columns: new[] { "OrganizationId", "SiteId" });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_SmsLogs_CreatedAt",
-                table: "SmsLogs",
-                column: "CreatedAt");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_SmsLogs_SubscriberId",
-                table: "SmsLogs",
-                column: "SubscriberId");
+CREATE INDEX IF NOT EXISTS ""IX_Subscribers_ExpireDate"" ON ""Subscribers"" (""ExpireDate"");
+CREATE INDEX IF NOT EXISTS ""IX_Subscribers_PPPoEUsername"" ON ""Subscribers"" (""PPPoEUsername"");
+CREATE INDEX IF NOT EXISTS ""IX_Subscribers_SiteId"" ON ""Subscribers"" (""SiteId"");
+CREATE INDEX IF NOT EXISTS ""IX_SubscriberPackageHistories_SiteId_CreatedAt"" ON ""SubscriberPackageHistories"" (""SiteId"", ""CreatedAt"");
+CREATE INDEX IF NOT EXISTS ""IX_SubscriberPackageHistories_SubscriberId"" ON ""SubscriberPackageHistories"" (""SubscriberId"");
+CREATE INDEX IF NOT EXISTS ""IX_RadiusAuthenticationLogs_CreatedAt"" ON ""RadiusAuthenticationLogs"" (""CreatedAt"");
+CREATE INDEX IF NOT EXISTS ""IX_RadiusAuthenticationLogs_SubscriberId"" ON ""RadiusAuthenticationLogs"" (""SubscriberId"");
+CREATE INDEX IF NOT EXISTS ""IX_RadiusAccountingSessions_SubscriberId_IsActive"" ON ""RadiusAccountingSessions"" (""SubscriberId"", ""IsActive"");
+CREATE INDEX IF NOT EXISTS ""IX_PaymentGatewayConfigs_OrganizationId_SiteId"" ON ""PaymentGatewayConfigs"" (""OrganizationId"", ""SiteId"");
+CREATE INDEX IF NOT EXISTS ""IX_SmsGatewayConfigs_OrganizationId_SiteId"" ON ""SmsGatewayConfigs"" (""OrganizationId"", ""SiteId"");
+CREATE INDEX IF NOT EXISTS ""IX_SmsLogs_CreatedAt"" ON ""SmsLogs"" (""CreatedAt"");
+CREATE INDEX IF NOT EXISTS ""IX_SmsLogs_SubscriberId"" ON ""SmsLogs"" (""SubscriberId"");
+");
 
             // ---------------------------------------------------------------
             // DATA FIXES
