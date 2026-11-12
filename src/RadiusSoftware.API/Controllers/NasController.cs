@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using RadiusSoftware.API.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using RadiusSoftware.API.Services.MikroTik;
@@ -14,6 +15,7 @@ using static Microsoft.EntityFrameworkCore.DbLoggerCategory.Database;
 namespace RadiusSoftware.API.Controllers;
 
 [Authorize]
+[SiteScoped(ScopedResource.Nas, "id")]
 [Route("api/[controller]")]
 [ApiController]
 public class NasController : ControllerBase

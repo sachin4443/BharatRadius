@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using RadiusSoftware.API.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -15,6 +16,8 @@ namespace RadiusSoftware.API.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
+[SiteScoped(ScopedResource.Subscriber, "subscriberId")]
+[SiteScoped(ScopedResource.CafDocument, "documentId")]
 public class CAFController : ControllerBase
 {
     private readonly AppDbContext _context;
@@ -1800,6 +1803,33 @@ public class CAFController : ControllerBase
             _ =>
                 "application/octet-stream"
         };
+    }
+
+    // =========================================================
+    // OPEN A GENERATED CAF PDF (login + site access required)
+    // =========================================================
+    [HttpGet("forms/{cafId:guid}/file")]
+    public async Task<IActionResult> GetCafPdf(Guid cafId)
+    {
+        var caf = await _context.CustomerApplicationForms
+            .AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == cafId);
+
+        if (caf == null || string.IsNullOrWhiteSpace(caf.PdfPath))
+            return NotFound(new { message = "CAF not found." });
+
+        var subscriber = await GetAuthorizedSubscriberAsync(caf.SubscriberId);
+        if (subscriber == null)
+            return NotFound(new { message = "CAF not found or access denied." });
+
+        var fileName = Path.GetFileName(caf.PdfPath);
+        var physicalPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "caf-forms", fileName);
+
+        if (!System.IO.File.Exists(physicalPath))
+            return NotFound(new { message = "CAF PDF file is missing on the server." });
+
+        var bytes = await System.IO.File.ReadAllBytesAsync(physicalPath);
+        return File(bytes, "application/pdf", fileName);
     }
 
     // =========================================================

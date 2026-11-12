@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using RadiusSoftware.API.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using RadiusSoftware.Core.DTOs;
@@ -9,6 +10,7 @@ using System.Security.Claims;
 namespace RadiusSoftware.API.Controllers;
 
 [Authorize]
+[SiteScoped(ScopedResource.Site, "id", "siteId")]
 [Route("api/[controller]")]
 [ApiController]
 public class SitesController : ControllerBase
@@ -128,7 +130,7 @@ public class SitesController : ControllerBase
             Username = model.AdminUsername,
             Email = model.AdminEmail,
             Mobile = model.AdminMobile,
-            PasswordHash = model.AdminPassword,
+            PasswordHash = RadiusSoftware.API.Security.PasswordUtil.Hash(model.AdminPassword),
             IsSuperAdmin = false,
             IsActive = true
         };
@@ -269,7 +271,7 @@ public class SitesController : ControllerBase
                 user.Mobile = model.AdminMobile;
                 if (!string.IsNullOrEmpty(model.AdminPassword))
                 {
-                    user.PasswordHash = model.AdminPassword;
+                    user.PasswordHash = RadiusSoftware.API.Security.PasswordUtil.Hash(model.AdminPassword);
                 }
 
                 var userRole = await _context.UserRoles.FirstOrDefaultAsync(ur => ur.UserId == user.Id);

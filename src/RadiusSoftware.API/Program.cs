@@ -70,6 +70,22 @@ builder.Services.AddAuthentication(options =>
         IssuerSigningKey = new SymmetricSecurityKey(
             Encoding.UTF8.GetBytes(builder.Configuration["JwtSettings:Secret"]!))
     };
+
+    // SignalR (WebSockets) cannot send an Authorization header, so the
+    // browser passes the JWT as ?access_token=... for the hub only.
+    options.Events = new JwtBearerEvents
+    {
+        OnMessageReceived = context =>
+        {
+            var accessToken = context.Request.Query["access_token"];
+            if (!string.IsNullOrEmpty(accessToken) &&
+                context.HttpContext.Request.Path.StartsWithSegments("/radiusLogHub"))
+            {
+                context.Token = accessToken;
+            }
+            return Task.CompletedTask;
+        }
+    };
 });
 
 // 🚀 FIXED CORS Policy for SignalR & REST APIs
@@ -97,6 +113,8 @@ if (!builder.Environment.IsDevelopment())
 {
     builder.Services.AddHostedService<RadiusServerService>();
 }
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<RadiusSoftware.API.Security.ISiteAccessService, RadiusSoftware.API.Security.SiteAccessService>();
 builder.Services.AddScoped<IMikroTikService, MikroTikService>();
 builder.Services.AddScoped<ISubscriberConnectionService, SubscriberConnectionService>();
 builder.Services.AddScoped<
@@ -140,6 +158,20 @@ app.UseHttpsRedirection();
 // Authentication MUST be before Authorization
 app.UseAuthentication();
 app.UseAuthorization();
+
+// Customer KYC documents and CAF PDFs must never be served as public static
+// files. They are only available through the authorized /api/CAF endpoints.
+app.Use(async (context, next) =>
+{
+    var path = context.Request.Path;
+    if (path.StartsWithSegments("/caf-forms", StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWithSegments("/caf-documents", StringComparison.OrdinalIgnoreCase))
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+    await next();
+});
 
 app.UseStaticFiles();
 

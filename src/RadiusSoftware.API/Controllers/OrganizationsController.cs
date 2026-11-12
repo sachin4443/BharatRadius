@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using RadiusSoftware.Core.DTOs;
@@ -72,7 +72,7 @@ public class OrganizationsController : ControllerBase
             Username = model.AdminUsername,
             Email = model.AdminEmail,
             Mobile = model.AdminMobile,
-            PasswordHash = model.AdminPassword,
+            PasswordHash = RadiusSoftware.API.Security.PasswordUtil.Hash(model.AdminPassword),
             IsSuperAdmin = false,
             IsActive = true
         };
@@ -126,7 +126,7 @@ public class OrganizationsController : ControllerBase
                 AdminFullName = x.admin != null ? x.admin.FullName : "N/A",
                 AdminEmail = x.admin != null ? x.admin.Email : "N/A",
                 AdminMobile = x.admin != null ? x.admin.Mobile : "N/A",
-                AdminPassword = x.admin != null ? x.admin.PasswordHash : "N/A",
+                AdminPassword = x.admin == null ? "N/A" : (RadiusSoftware.API.Security.PasswordUtil.IsHashed(x.admin.PasswordHash) ? "(encrypted)" : x.admin.PasswordHash),
                 x.org.IsActive,
                 x.org.CreatedAt
             })
@@ -157,12 +157,12 @@ public class OrganizationsController : ControllerBase
         org.SecondaryColor = model.SecondaryColor ?? org.SecondaryColor;
         if (!string.IsNullOrEmpty(savedLogoUrl)) org.LogoUrl = savedLogoUrl;
 
-        if (!string.IsNullOrEmpty(model.NewPassword))
+        if (!string.IsNullOrEmpty(model.NewPassword) && model.NewPassword != "(encrypted)")
         {
             var adminUser = await _context.Users.FirstOrDefaultAsync(u => u.OrganizationId == org.Id);
             if (adminUser != null)
             {
-                adminUser.PasswordHash = model.NewPassword;
+                adminUser.PasswordHash = RadiusSoftware.API.Security.PasswordUtil.Hash(model.NewPassword);
             }
         }
 

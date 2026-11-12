@@ -1,9 +1,0 @@
-[2026-09-21 19:41:46] Expired Subscriber Service started.
-[2026-09-21 19:41:46] Executing immediate startup check for expired subscribers...
-[2026-09-21 19:41:47] No expired subscribers found.
-[2026-09-21 20:06:44] Expired Subscriber Service started.
-[2026-09-21 20:06:44] Executing immediate startup check for expired subscribers...
-[2026-09-21 20:06:46] No expired subscribers found.
-[2026-09-21 20:14:36] Expired Subscriber Service started.
-[2026-09-21 20:14:36] Executing immediate startup check for expired subscribers...
-[2026-09-21 20:14:37] No expired subscribers found.

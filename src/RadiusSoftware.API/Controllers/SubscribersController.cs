@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using RadiusSoftware.API.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using RadiusSoftware.API.Services;
@@ -10,6 +11,7 @@ using RadiusSoftware.Infrastructure.Data;
 namespace RadiusSoftware.API.Controllers;
 
 [Authorize]
+[SiteScoped(ScopedResource.Subscriber, "id")]
 [Route("api/[controller]")]
 [ApiController]
 public class SubscribersController : ControllerBase
@@ -17,12 +19,15 @@ public class SubscribersController : ControllerBase
     private readonly AppDbContext _context;
     private readonly IMikroTikService _mikroTikService;
     private readonly ISubscriberConnectionService _subscriberConnectionService;
+    private readonly ISiteAccessService _access;
 
 
     public SubscribersController(
         AppDbContext context,
-        IMikroTikService mikroTikService, ISubscriberConnectionService subscriberConnectionService)
+        IMikroTikService mikroTikService, ISubscriberConnectionService subscriberConnectionService,
+        ISiteAccessService access)
     {
+        _access = access;
         _context = context;
         _mikroTikService = mikroTikService;
         _subscriberConnectionService = subscriberConnectionService;
@@ -256,6 +261,48 @@ public class SubscribersController : ControllerBase
                 siteId = userSite.Id; // Auto-assign login user's site
             }
 
+            // 1b. When editing, keep the subscriber in its own site (a parent
+            //     site may edit subscribers of its child sites)
+            if (model.Id != Guid.Empty)
+            {
+                var currentSiteId = await _context.Subscribers.AsNoTracking()
+                    .Where(s => s.Id == model.Id).Select(s => (Guid?)s.SiteId).FirstOrDefaultAsync();
+                if (currentSiteId == null) return NotFound(new { message = "Subscriber not found." });
+                if (!isSuperAdmin && !await _access.CanAccessSiteAsync(currentSiteId.Value)) return Forbid();
+                siteId = currentSiteId.Value;
+            }
+
+            // 1c. PPPoE username must be unique across the whole system
+            //     (the RADIUS server finds subscribers by username only)
+            var pppoeUsername = (model.PPPoEUsername ?? string.Empty).Trim();
+            model.PPPoEUsername = pppoeUsername;
+            if (!string.IsNullOrEmpty(pppoeUsername))
+            {
+                var lower = pppoeUsername.ToLower();
+                var duplicate = await _context.Subscribers.AsNoTracking()
+                    .AnyAsync(s => s.Id != model.Id && s.PPPoEUsername.ToLower() == lower);
+                if (duplicate)
+                {
+                    return Conflict(new { message = $"PPPoE username '{pppoeUsername}' already exists. Please choose another username." });
+                }
+            }
+            else if (model.Id == Guid.Empty && (model.Service ?? "PPPoE") == "PPPoE")
+            {
+                return BadRequest(new { message = "PPPoE username is required." });
+            }
+
+            // 1d. NAS and package must belong to the subscriber's site
+            if (model.NasId.HasValue &&
+                !await _context.NasDevices.AnyAsync(n => n.Id == model.NasId.Value && n.SiteId == siteId))
+            {
+                return BadRequest(new { message = "Selected NAS does not belong to this site." });
+            }
+            if (model.PackageId.HasValue &&
+                !await _context.PackageProfiles.AnyAsync(p => p.Id == model.PackageId.Value && p.SiteId == siteId))
+            {
+                return BadRequest(new { message = "Selected package does not belong to this site." });
+            }
+
             // 2. CREATE NEW SUBSCRIBER
             if (model.Id == Guid.Empty)
             {
@@ -301,8 +348,6 @@ public class SubscribersController : ControllerBase
                 // 3. UPDATE EXISTING SUBSCRIBER
                 var existingSubscriber = await _context.Subscribers.FirstOrDefaultAsync(s => s.Id == model.Id);
                 if (existingSubscriber == null) return NotFound(new { message = "Subscriber not found." });
-
-                if (!isSuperAdmin && existingSubscriber.SiteId != siteId) return Forbid();
 
                 existingSubscriber.SiteId = siteId; // Ensure SiteId remains locked
                 existingSubscriber.NasId = model.NasId;

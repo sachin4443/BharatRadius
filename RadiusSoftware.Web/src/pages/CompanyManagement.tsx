@@ -228,7 +228,7 @@ export const CompanyManagement: React.FC = () => {
       adminEmail: comp.adminEmail || "",
       adminMobile: comp.adminMobile || "",
       adminPassword: "",
-      newPassword: comp.adminPassword && comp.adminPassword !== "N/A" ? comp.adminPassword : "",
+      newPassword: "", // blank = keep current password
     });
     setFieldErrors({});
     setShowModal(true);

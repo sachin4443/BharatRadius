@@ -4,3 +4,10 @@ obj/
 *.user
 node_modules/
 dist/
+
+# Customer data / runtime files (never commit)
+src/RadiusSoftware.API/wwwroot/caf-forms/
+src/RadiusSoftware.API/wwwroot/caf-documents/
+src/RadiusSoftware.API/wwwroot/uploads/subscribers/
+src/RadiusSoftware.API/ExpireUserLogs/
+src/RadiusSoftware.API/Logs/

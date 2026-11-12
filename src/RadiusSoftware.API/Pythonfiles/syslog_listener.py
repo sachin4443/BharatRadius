@@ -1,6 +1,8 @@
 import socket
 import os
 import re
+import json
+import time
 from datetime import datetime
 import psycopg2  # pip install psycopg2-binary
 
@@ -16,13 +18,55 @@ BASE_LOG_DIR = r"F:\bharatradiussyslog"
 
 
 # PostgreSQL Database
-DB_CONFIG = {
-    "dbname": "RadiusSoftwareDb",
-    "user": "postgres",
-    "password": "123qwe!@#,./wifi",
-    "host": "localhost",
-    "port": "5432"
-}
+# Connection details are read from the API's appsettings.json
+# (ConnectionStrings:DefaultConnection), so the DB name/password is kept
+# in ONE place. Environment variables override it if set:
+#   BR_DB_NAME, BR_DB_USER, BR_DB_PASSWORD, BR_DB_HOST, BR_DB_PORT
+
+
+def _load_db_config():
+    config = {
+        "dbname": "UatDatabase",
+        "user": "postgres",
+        "password": "",
+        "host": "localhost",
+        "port": "5432",
+    }
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    for candidate in (
+        os.path.join(here, "..", "appsettings.json"),
+        os.path.join(here, "appsettings.json"),
+    ):
+        try:
+            with open(candidate, encoding="utf-8-sig") as fh:
+                conn_str = json.load(fh)["ConnectionStrings"]["DefaultConnection"]
+            parts = dict(
+                p.split("=", 1) for p in conn_str.split(";") if "=" in p
+            )
+            parts = {k.strip().lower(): v.strip() for k, v in parts.items()}
+            config["host"] = parts.get("host", config["host"])
+            config["port"] = parts.get("port", config["port"])
+            config["dbname"] = parts.get("database", config["dbname"])
+            config["user"] = parts.get("username", config["user"])
+            config["password"] = parts.get("password", config["password"])
+            break
+        except Exception:
+            continue
+
+    config["dbname"] = os.environ.get("BR_DB_NAME", config["dbname"])
+    config["user"] = os.environ.get("BR_DB_USER", config["user"])
+    config["password"] = os.environ.get("BR_DB_PASSWORD", config["password"])
+    config["host"] = os.environ.get("BR_DB_HOST", config["host"])
+    config["port"] = os.environ.get("BR_DB_PORT", config["port"])
+    return config
+
+
+DB_CONFIG = _load_db_config()
+
+# Cache entries expire so that a subscriber moved to another site
+# is picked up without restarting the listener.
+CACHE_TTL_SECONDS = 600
 
 
 # In-memory cache
@@ -78,8 +122,9 @@ def sanitize_folder_name(name):
 def get_site_and_subscriber(pppoe_username):
 
     # Cache check
-    if pppoe_username in subscriber_cache:
-        return subscriber_cache[pppoe_username]
+    cached = subscriber_cache.get(pppoe_username)
+    if cached and time.time() - cached[2] < CACHE_TTL_SECONDS:
+        return cached[0], cached[1]
 
     site_name = "Unassigned_Site"
     subscriber_name = pppoe_username
@@ -139,7 +184,8 @@ def get_site_and_subscriber(pppoe_username):
     # Cache
     subscriber_cache[pppoe_username] = (
         site_name,
-        subscriber_name
+        subscriber_name,
+        time.time()
     )
 
     return site_name, subscriber_name

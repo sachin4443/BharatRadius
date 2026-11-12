@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
@@ -81,6 +81,10 @@ public class RadiusServerService : BackgroundService
     // LOGGING
     // =========================================================
 
+    // Site of the NAS currently being processed. AsyncLocal keeps it
+    // separate for every packet that is processed in parallel.
+    private static readonly AsyncLocal<Guid?> CurrentNasSite = new();
+
     private async Task LogAndBroadcast(
         string message,
         string type = "INFO")
@@ -99,7 +103,13 @@ public class RadiusServerService : BackgroundService
 
         try
         {
-            await _hubContext.Clients.All.SendAsync(
+            // Super admin sees everything, a site only sees logs of its own NAS
+            var groups = new List<string> { RadiusLogHub.SuperAdminGroup };
+            var siteId = CurrentNasSite.Value;
+            if (siteId.HasValue)
+                groups.Add(RadiusLogHub.SiteGroup(siteId.Value));
+
+            await _hubContext.Clients.Groups(groups).SendAsync(
                 "ReceiveLog",
                 fullMessage,
                 type);
@@ -297,6 +307,8 @@ public class RadiusServerService : BackgroundService
 
             return;
         }
+
+        CurrentNasSite.Value = nas.SiteId;
 
         if (!nas.IsRadiusConfigured)
         {
@@ -1029,6 +1041,8 @@ public class RadiusServerService : BackgroundService
 
             return;
         }
+
+        CurrentNasSite.Value = nas.SiteId;
 
         if (string.IsNullOrWhiteSpace(
                 nas.SharedSecret))
