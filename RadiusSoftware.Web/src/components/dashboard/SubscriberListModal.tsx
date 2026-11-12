@@ -4,6 +4,7 @@ import apiClient from "../../services/api";
 import RechargeModal from "../subscriber/RechargeModal";
 import SubscriberStatusBadge from "../subscriber/SubscriberStatusBadge";
 import { apiError, daysUntil, formatDate } from "../../utils/format";
+import { primeSubscriber } from "../../services/subscriberCache";
 
 interface Props {
   title: string;
@@ -116,6 +117,7 @@ const SubscriberListModal: React.FC<Props> = ({ title, status, onClose }) => {
                               href="#"
                               onClick={(e) => {
                                 e.preventDefault();
+                                primeSubscriber(r);
                                 navigate(`/subscribers/${r.id}`);
                               }}
                             >

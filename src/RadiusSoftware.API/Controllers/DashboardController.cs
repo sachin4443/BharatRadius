@@ -50,7 +50,7 @@ public class DashboardController : ControllerBase
     private async Task<object> BuildSummaryAsync(Guid? siteId)
     {
 
-        var rows = await _subscribers.RowsAsync();
+        var rows = await _subscribers.LeanRowsAsync();
         if (siteId.HasValue) rows = rows.Where(r => r.SiteId == siteId.Value);
 
         var statusCounts = await rows.GroupBy(r => r.Status)
@@ -162,7 +162,7 @@ public class DashboardController : ControllerBase
             .ToListAsync();
 
         // Subscriber counters per site (status computed exactly like the subscriber list)
-        var rows = await _subscribers.RowsAsync();
+        var rows = await _subscribers.LeanRowsAsync();
         var perSite = await rows
             .GroupBy(r => r.SiteId)
             .Select(g => new
@@ -301,7 +301,7 @@ public class DashboardController : ControllerBase
     [HttpGet("live-by-nas")]
     public async Task<IActionResult> LiveByNas()
     {
-        var rows = await _subscribers.RowsAsync();
+        var rows = await _subscribers.LeanRowsAsync();
         var siteIds = await SiteIdsAsync();
 
         var nasQuery = _db.NasDevices.AsNoTracking();

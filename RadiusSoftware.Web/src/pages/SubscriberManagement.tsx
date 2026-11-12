@@ -10,6 +10,7 @@ import SubscriberExcelImport from "../components/subscriber/SubscriberExcelImpor
 import RechargeModal from "../components/subscriber/RechargeModal";
 import { daysUntil, formatDate, saveBlob } from "../utils/format";
 import { usePolling } from "../hooks/usePolling";
+import { primeSubscriber } from "../services/subscriberCache";
 
 // ============================================================
 // TYPES
@@ -526,7 +527,10 @@ const SubscriberManagement: React.FC = () => {
       staticIp: subscriber.staticIp || "",
       connectionEnabled: subscriber.connectionEnabled ?? true,
       isActive: subscriber.isActive ?? true,
-      expireDate: subscriber.expireDate ? subscriber.expireDate.substring(0, 10) : "",
+      // Show the India date (the stored value is UTC)
+      expireDate: subscriber.expireDate
+        ? new Date(subscriber.expireDate).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" })
+        : "",
     });
 
     setShowModal(true);
@@ -568,6 +572,11 @@ const SubscriberManagement: React.FC = () => {
       return;
     }
 
+    if (formData.service === "Static" && !isEdit && !formData.macAddress.trim()) {
+      alert("Static IP / IPoE subscribers log in by MAC address. Please enter the MAC address.");
+      setActiveTab("internet");
+      return;
+    }
     if (
       formData.service === "PPPoE" &&
       (!isEdit || enablePPPoEEdit) &&
@@ -596,8 +605,9 @@ const SubscriberManagement: React.FC = () => {
         packageId: formData.packageId ? formData.packageId : null,
 
         // PPPoE Edit Logic
-        pppoeUsername: isEdit && !enablePPPoEEdit ? "" : formData.pppoeUsername,
-        pppoePassword: isEdit && !enablePPPoEEdit ? "" : formData.pppoePassword,
+        // Static IP users have no login name / password
+        pppoeUsername: formData.service === "Static" || (isEdit && !enablePPPoEEdit) ? "" : formData.pppoeUsername,
+        pppoePassword: formData.service === "Static" || (isEdit && !enablePPPoEEdit) ? "" : formData.pppoePassword,
       };
 
       await apiClient.post("/Subscribers/save", payload);
@@ -954,7 +964,9 @@ const SubscriberManagement: React.FC = () => {
                 filteredSubscribers.map((subscriber, index) => {
                   const router = getRouter(subscriber);
                   const pkg = getPackage(subscriber);
-                  const username = subscriber.pppoeUsername || subscriber.ppPoEUsername || "—";
+                  // Static IP users have no login name: show their MAC / IP instead
+                  const username =
+                    subscriber.pppoeUsername || subscriber.ppPoEUsername || subscriber.macAddress || subscriber.staticIp || "—";
                   const rowClass =
                     subscriber.status === "Online"
                       ? "row-online"
@@ -980,8 +992,10 @@ const SubscriberManagement: React.FC = () => {
                         <a
                           href={`/subscribers/${subscriber.id}`}
                           className="fw-semibold text-decoration-none"
+                          onMouseEnter={() => import("./SubscriberProfile")}
                           onClick={(e) => {
                             e.preventDefault();
+                            primeSubscriber(subscriber);
                             navigate(`/subscribers/${subscriber.id}`);
                           }}
                         >
@@ -1524,18 +1538,16 @@ const SubscriberManagement: React.FC = () => {
                           value={formData.service}
                           onChange={handleChange}
                         >
-                          <option value="PPPoE">PPPoE</option>
-
-                          <option value="Hotspot">Hotspot</option>
-
-                          <option value="Static">Static</option>
+                          <option value="PPPoE">PPPoE (username + password)</option>
+                          <option value="Hotspot">Hotspot (login page or MAC)</option>
+                          <option value="Static">Static IP / IPoE (login by MAC, fixed IP)</option>
                         </select>
                       </div>
 
                       {/* PPPOE */}
 
                       {/* PPPoE SECTION */}
-                      {formData.service === "PPPoE" && (
+                      {(formData.service === "PPPoE" || formData.service === "Hotspot") && (
                         <>
                           {/* Edit Checkbox sirf Password ke liye */}
                           {isEdit && (
@@ -1557,20 +1569,24 @@ const SubscriberManagement: React.FC = () => {
                           )}
 
                           <div className="col-md-6">
-                            <label className="form-label fw-semibold">PPPoE Username *</label>
+                            <label className="form-label fw-semibold">
+                              {formData.service === "Hotspot" ? "Login Username" : "PPPoE Username *"}
+                            </label>
                             <input
                               className={`form-control font-monospace ${isEdit ? "bg-light text-muted" : ""}`}
                               name="pppoeUsername"
                               value={formData.pppoeUsername}
                               onChange={handleChange}
                               readOnly={isEdit} // ✅ Username hamesha read-only rahega edit mode me
-                              required
+                              required={formData.service === "PPPoE"}
                               placeholder="username"
                             />
                           </div>
 
                           <div className="col-md-6">
-                            <label className="form-label fw-semibold">PPPoE Password {!isEdit && "*"}</label>
+                            <label className="form-label fw-semibold">
+                              {formData.service === "Hotspot" ? "Login Password" : "PPPoE Password"} {!isEdit && formData.service === "PPPoE" && "*"}
+                            </label>
                             <input
                               type="text" // ✅ Purana password saaf-saaf text format me dikhega
                               className={`form-control font-monospace ${isEdit && !enablePPPoEEdit ? "bg-light text-muted" : ""}`}
@@ -1578,7 +1594,7 @@ const SubscriberManagement: React.FC = () => {
                               value={formData.pppoePassword}
                               onChange={handleChange}
                               readOnly={isEdit && !enablePPPoEEdit} // ✅ Checkbox on hone par hi edit hoga
-                              required
+                              required={formData.service === "PPPoE"}
                               placeholder="Password"
                             />
                           </div>
@@ -1589,7 +1605,7 @@ const SubscriberManagement: React.FC = () => {
 
                       <div className="col-md-6">
                         <label className="form-label fw-semibold">
-                          MAC Address
+                          MAC Address {formData.service === "Static" && !isEdit && "*"}
                         </label>
 
                         <input
@@ -1613,8 +1629,11 @@ const SubscriberManagement: React.FC = () => {
                           name="staticIp"
                           value={formData.staticIp}
                           onChange={handleChange}
-                          placeholder="Optional"
+                          placeholder={formData.service === "Static" ? "e.g. 10.10.10.25" : "Optional"}
                         />
+                        <div className="small text-muted mt-1">
+                          Sent to the router as Framed-IP-Address (PPPoE / DHCP get this exact IP).
+                        </div>
                       </div>
 
                       <div className="col-12">
@@ -1630,8 +1649,11 @@ const SubscriberManagement: React.FC = () => {
                           </div>
 
                           <div className="small text-muted">
-                            Subscriber authentication will use the selected
-                            service, NAS and PPPoE credentials.
+                            {formData.service === "Static"
+                              ? "The router (DHCP server or Hotspot with RADIUS enabled) sends the client's MAC. The subscriber gets the static IP, package speed and is cut off when the plan expires."
+                              : formData.service === "Hotspot"
+                                ? "Hotspot login with username/password, or automatic login by MAC address if a MAC is entered."
+                                : "PPPoE login with the username and password above. Static IP (optional) is assigned by RADIUS."}
                           </div>
                         </div>
                       </div>
@@ -1694,7 +1716,9 @@ const SubscriberManagement: React.FC = () => {
                         />
 
                         <div className="small text-muted mt-1">
-                          Subscriber service expiry date
+                          Valid till the end of this day (India time).
+                          {!isEdit && " Leave empty to calculate it from the selected package (starting now)."}
+                          {isEdit && " For renewals use ⚡ Recharge, so the wallet and history are updated."}
                         </div>
                       </div>
                       {/* ACTIVE */}

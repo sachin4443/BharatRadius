@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import apiClient from "../services/api";
+import { discardLastSession, pushCurrentSession } from "../utils/impersonation";
 
 interface SiteUser {
   fullName?: string;
@@ -274,14 +275,14 @@ export const SitesManagement: React.FC = () => {
 
   const handleImpersonate = async (siteId: string) => {
     try {
-      localStorage.setItem("adminToken", localStorage.getItem("token") || "");
-      localStorage.setItem("adminUser", localStorage.getItem("user") || "");
-
+      // Keep the current admin session so "Back to Admin" can return to it
+      pushCurrentSession();
       const response = await apiClient.post(`/Auth/impersonate-site?siteId=${siteId}`);
       localStorage.setItem("token", response.data.token);
       localStorage.setItem("user", JSON.stringify(response.data));
       window.location.assign("/dashboard");
     } catch {
+      discardLastSession();
       alert("Direct login failed. Ensure active admin account exists for this site.");
     }
   };

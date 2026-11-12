@@ -35,6 +35,7 @@ interface Preview {
   uploadMbps: number;
   price: number;
   validity: string;
+  isActive?: boolean;
   quantity: number;
   startDate: string;
   endDate: string;
@@ -60,6 +61,12 @@ const RechargeModal: React.FC<Props> = ({ subscriber, onClose, onDone }) => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  // One id per recharge attempt: the server processes it only once
+  const [requestId] = useState(() =>
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  );
 
   const username = subscriber.pppoeUsername || subscriber.ppPoEUsername || "";
 
@@ -110,6 +117,7 @@ const RechargeModal: React.FC<Props> = ({ subscriber, onClose, onDone }) => {
         quantity,
         startFrom,
         comment,
+        requestId: /^[0-9a-f-]{36}$/i.test(requestId) ? requestId : undefined,
       });
       setSuccess(res.data?.message || "Recharge successful.");
       onDone?.();
@@ -233,8 +241,8 @@ const RechargeModal: React.FC<Props> = ({ subscriber, onClose, onDone }) => {
                       value={startFrom}
                       onChange={(e) => setStartFrom(e.target.value as "auto" | "now")}
                     >
-                      <option value="auto">Auto (same plan running → after current expiry)</option>
-                      <option value="now">Now</option>
+                      <option value="auto">Auto (active → after current expiry, expired → from now)</option>
+                      <option value="now">Start from now</option>
                     </select>
                   </div>
                 </div>
@@ -244,6 +252,13 @@ const RechargeModal: React.FC<Props> = ({ subscriber, onClose, onDone }) => {
                     <div className="text-muted small">{loadingPreview ? "Calculating..." : "Select a package."}</div>
                   ) : (
                     <div className="d-flex flex-wrap gap-3 small">
+                      <div className="w-100 text-muted">
+                        {preview.isActive && startFrom === "auto"
+                          ? "Subscriber is active: the new period is added after the current expiry."
+                          : preview.isActive
+                            ? "Plan restarts now; remaining days of the current period are not carried forward."
+                            : "Subscriber is expired: the new period starts now."}
+                      </div>
                       <div>
                         Start Date:{" "}
                         <span className="badge bg-success-subtle text-success-emphasis border">

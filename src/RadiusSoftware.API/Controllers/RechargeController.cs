@@ -4,6 +4,8 @@ using Microsoft.EntityFrameworkCore;
 using RadiusSoftware.API.Security;
 using RadiusSoftware.API.Services.MikroTik;
 using RadiusSoftware.API.Services.Query;
+using RadiusSoftware.API.Services.Billing;
+using Microsoft.Extensions.Caching.Memory;
 using RadiusSoftware.API.Services.Sms;
 using RadiusSoftware.Core.Entities;
 using RadiusSoftware.Infrastructure.Data;
@@ -13,8 +15,9 @@ namespace RadiusSoftware.API.Controllers;
 /// <summary>
 /// Subscriber recharge / renewal / package change.
 ///
-///  - Renewal of the same package while it is still running extends from the
-///    current expiry date ("advance recharge"); otherwise the new period starts now.
+///  - Active subscriber (expiry in the future): the new period starts at the current
+///    expiry, so paid days are never lost ("advance recharge").
+///    Expired subscriber: the new period starts now. (ExpiryCalculator)
 ///  - Quantity buys several periods at once (e.g. 3 x 1 month).
 ///  - Amount = package price x quantity, deducted from the paying site's wallet.
 ///    The wallet row is locked (SELECT ... FOR UPDATE) so double clicks or two
@@ -31,14 +34,17 @@ public class RechargeController : ControllerBase
     private readonly IMikroTikService _mikroTik;
     private readonly ISmsService _sms;
     private readonly ILogger<RechargeController> _logger;
+    private readonly IMemoryCache _cache;
 
     public RechargeController(
         AppDbContext db,
         ISiteAccessService access,
         IMikroTikService mikroTik,
         ISmsService sms,
-        ILogger<RechargeController> logger)
+        ILogger<RechargeController> logger,
+        IMemoryCache cache)
     {
+        _cache = cache;
         _db = db;
         _access = access;
         _mikroTik = mikroTik;
@@ -53,34 +59,14 @@ public class RechargeController : ControllerBase
         /// <summary>"auto" (default), "now" or "expiry"</summary>
         public string? StartFrom { get; set; }
         public string? Comment { get; set; }
+        /// <summary>
+        /// Unique id created by the browser for one recharge click. The same id is
+        /// processed only once (double click / network retry protection).
+        /// </summary>
+        public Guid? RequestId { get; set; }
     }
 
-    // =========================================================
-    // Validity helper: months / years use the calendar
-    // =========================================================
-    public static DateTime AddValidity(DateTime start, PackageProfile package, int quantity)
-    {
-        var amount = Math.Max(1, package.ExpiryDays) * Math.Max(1, quantity);
-        var type = (package.ValidityType ?? "Days").Trim().ToLowerInvariant();
-
-        if (type.Contains("month")) return start.AddMonths(amount);
-        if (type.Contains("year")) return start.AddYears(amount);
-        if (type.Contains("week")) return start.AddDays(amount * 7);
-        if (type.Contains("hour")) return start.AddHours(amount);
-        return start.AddDays(amount);
-    }
-
-    private static DateTime ComputeStart(Subscriber sub, PackageProfile package, string? startFrom, DateTime now)
-    {
-        var running = sub.ExpireDate.HasValue && sub.ExpireDate.Value > now;
-        return (startFrom ?? "auto").ToLowerInvariant() switch
-        {
-            "now" => now,
-            "expiry" => running ? sub.ExpireDate!.Value : now,
-            // auto: extend if the same package is still running
-            _ => running && sub.PackageId == package.Id ? sub.ExpireDate!.Value : now
-        };
-    }
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, byte> RunningRequests = new();
 
     /// <summary>Site whose wallet pays: the logged-in user's own site, else the subscriber's site.</summary>
     private async Task<Guid> PayingSiteIdAsync(Subscriber sub)
@@ -103,10 +89,10 @@ public class RechargeController : ControllerBase
             .FirstOrDefaultAsync(p => p.Id == packageId && p.SiteId == sub.SiteId && p.IsActive);
         if (package == null) return BadRequest(new { message = "Package is not available for this subscriber's site." });
 
-        quantity = Math.Clamp(quantity, 1, 36);
+        quantity = Math.Clamp(quantity, 1, ExpiryCalculator.MaxQuantity);
         var now = DateTime.UtcNow;
-        var start = ComputeStart(sub, package, startFrom, now);
-        var end = AddValidity(start, package, quantity);
+        var start = ExpiryCalculator.RechargeStart(sub.ExpireDate, now, startFrom);
+        var end = ExpiryCalculator.AddValidity(start, package, quantity);
         var amount = package.Price * quantity;
 
         var payingSite = await PayingSiteIdAsync(sub);
@@ -123,7 +109,8 @@ public class RechargeController : ControllerBase
             downloadMbps = package.DownloadMbps,
             uploadMbps = package.UploadMbps,
             price = package.Price,
-            validity = $"{package.ExpiryDays} {package.ValidityType}",
+            validity = ExpiryCalculator.Describe(package),
+            isActive = sub.ExpireDate.HasValue && sub.ExpireDate.Value > now,
             quantity,
             startDate = start,
             endDate = end,
@@ -144,7 +131,33 @@ public class RechargeController : ControllerBase
         if (request == null || request.PackageId == Guid.Empty)
             return BadRequest(new { success = false, message = "Please select a package." });
 
-        var quantity = Math.Clamp(request.Quantity, 1, 36);
+        var quantity = Math.Clamp(request.Quantity, 1, ExpiryCalculator.MaxQuantity);
+
+        // Duplicate protection: the same click is never charged twice
+        if (request.RequestId.HasValue)
+        {
+            var doneKey = $"recharge-done:{request.RequestId}";
+            if (_cache.TryGetValue(doneKey, out object? previous) && previous != null)
+                return Ok(previous);
+            if (!RunningRequests.TryAdd(request.RequestId.Value, 0))
+                return Conflict(new { success = false, message = "This recharge is already being processed." });
+        }
+
+        try
+        {
+            var result = await ProcessRechargeAsync(subscriberId, request, quantity);
+            if (request.RequestId.HasValue && result is OkObjectResult ok && ok.Value != null)
+                _cache.Set($"recharge-done:{request.RequestId}", ok.Value, TimeSpan.FromMinutes(30));
+            return result;
+        }
+        finally
+        {
+            if (request.RequestId.HasValue) RunningRequests.TryRemove(request.RequestId.Value, out _);
+        }
+    }
+
+    private async Task<IActionResult> ProcessRechargeAsync(Guid subscriberId, RechargeRequest request, int quantity)
+    {
 
         var sub = await _db.Subscribers.FirstOrDefaultAsync(s => s.Id == subscriberId);
         if (sub == null) return NotFound(new { success = false, message = "Subscriber not found." });
@@ -194,8 +207,8 @@ public class RechargeController : ControllerBase
             await _db.Entry(sub).ReloadAsync();
             oldPackageId = sub.PackageId;
 
-            start = ComputeStart(sub, package, request.StartFrom, now);
-            end = AddValidity(start, package, quantity);
+            start = ExpiryCalculator.RechargeStart(sub.ExpireDate, now, request.StartFrom);
+            end = ExpiryCalculator.AddValidity(start, package, quantity);
 
             var currentHistory = await _db.SubscriberPackageHistories
                 .Where(h => h.SubscriberId == sub.Id && h.IsCurrent)
