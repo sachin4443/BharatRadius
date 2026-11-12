@@ -43,7 +43,8 @@ const WalletTransactions: React.FC = () => {
     fetchTopups();
     apiClient
       .get("/WalletTopup/options")
-      .then((res) => setCanAddMoney(!!res.data?.enabled))
+      // any site account may add money; the popup explains if payment is not set up
+      .then((res) => setCanAddMoney(!!res.data?.siteName))
       .catch(() => setCanAddMoney(false));
     const onUpdated = () => {
       fetchTransactions();

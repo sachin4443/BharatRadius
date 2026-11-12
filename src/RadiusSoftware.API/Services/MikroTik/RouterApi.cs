@@ -59,10 +59,7 @@ public static class RouterApi
             // 2. Real API session
             return await Task.Run(() =>
             {
-                using var connection = ConnectionFactory.CreateConnection(TikConnectionType.Api);
-                connection.SendTimeout = timeoutMs;
-                connection.ReceiveTimeout = timeoutMs;
-                connection.Open(nas.NasIpAddress, nas.ApiPort, nas.ApiUsername, nas.ApiPassword);
+                using var connection = OpenWithLogin(nas, key, timeoutMs);
                 UnreachableUntil.TryRemove(key, out _);
                 return work(connection);
             });
@@ -70,6 +67,33 @@ public static class RouterApi
         finally
         {
             gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Opens the API session (tik4net "Api" handles both old and new RouterOS login).
+    /// A refused login is remembered for 60 s so a wrong password does not flood
+    /// the router with failed logins, and the error says what to check.
+    /// </summary>
+    private static ITikConnection OpenWithLogin(NasDevice nas, string key, int timeoutMs)
+    {
+        var connection = ConnectionFactory.CreateConnection(TikConnectionType.Api);
+        try
+        {
+            connection.SendTimeout = timeoutMs;
+            connection.ReceiveTimeout = timeoutMs;
+            connection.Open(nas.NasIpAddress, nas.ApiPort, nas.ApiUsername, nas.ApiPassword);
+            return connection;
+        }
+        catch (Exception ex) when (ex is TikCommandException or TikConnectionException)
+        {
+            connection.Dispose();
+            UnreachableUntil[key] = DateTime.UtcNow.AddSeconds(60);
+            var detail = string.IsNullOrWhiteSpace(ex.Message) ? "" : $" ({ex.Message.Trim()})";
+            throw new RouterUnreachableException(
+                $"Login to router {nas.NasName} ({nas.NasIpAddress}:{nas.ApiPort}) failed{detail}. " +
+                "Check the NAS API username / password, that the user's group has the 'api' policy, " +
+                "and that IP > Services > api is enabled for the server's IP.");
         }
     }
 

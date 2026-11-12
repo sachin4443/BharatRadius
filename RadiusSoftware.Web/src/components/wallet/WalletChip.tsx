@@ -7,7 +7,7 @@ const AddMoneyModal = lazy(() => import("./AddMoneyModal"));
 
 /**
  * Wallet balance in the top bar for site accounts (L1 / L2 / L3 ...) with a quick
- * "+ Add" button when online payment is set up. Hidden for organization / super admins.
+ * "+ Add" button (any balance). Hidden for organization / super admins.
  */
 const WalletChip: React.FC = () => {
   const [info, setInfo] = useState<{ enabled: boolean; balance: number; siteName?: string } | null>(null);
@@ -39,16 +39,16 @@ const WalletChip: React.FC = () => {
       >
         <span className="d-none d-md-inline" aria-hidden="true">💳</span>
         <span className={`fw-semibold small text-nowrap ${low ? "text-danger" : "text-dark"}`}>{formatMoney(info.balance)}</span>
-        {info.enabled && (
-          <button
-            type="button"
-            className="btn btn-sm btn-brand rounded-pill py-0 px-2 ms-1"
-            style={{ fontSize: 12 }}
-            onClick={() => setShow(true)}
-          >
-            + Add
-          </button>
-        )}
+        {/* Always offered: if online payment is not set up yet the popup says whom to ask */}
+        <button
+          type="button"
+          className="btn btn-sm btn-brand rounded-pill py-0 px-2 ms-1"
+          style={{ fontSize: 12 }}
+          onClick={() => setShow(true)}
+          title={info.enabled ? "Add money online" : "Online payment is not set up yet"}
+        >
+          + Add
+        </button>
       </div>
       {show &&
         createPortal(

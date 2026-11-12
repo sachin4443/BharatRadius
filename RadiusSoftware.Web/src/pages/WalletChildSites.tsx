@@ -1,5 +1,7 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, Suspense, lazy } from "react";
 import apiClient from "../services/api";
+
+const AddMoneyModal = lazy(() => import("../components/wallet/AddMoneyModal"));
 
 interface ChildSite {
   id: string;
@@ -37,6 +39,7 @@ const WalletChildSites: React.FC = () => {
   const [filterFrom, setFilterFrom] = useState("");
   const [filterTo, setFilterTo] = useState("");
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [showAddMoney, setShowAddMoney] = useState(false);
 
   const loadData = async () => {
     try {
@@ -118,7 +121,7 @@ const WalletChildSites: React.FC = () => {
   return (
     <div className="container-fluid py-2 px-3">
       {/* HEADER */}
-      <div className="d-flex justify-content-between align-items-center mb-4">
+      <div className="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-3">
         <div>
           <h3 className="fw-bold mb-1">Child Site Wallet & Transfer Lifecycle</h3>
           <p className="text-muted mb-0">
@@ -126,11 +129,25 @@ const WalletChildSites: React.FC = () => {
           </p>
         </div>
 
-        <div className="card border-0 shadow-sm rounded-4 px-4 py-3 bg-white">
-          <small className="text-muted">Available Balance</small>
-          <h4 className="fw-bold text-brand mb-0">₹{parentBalance.toFixed(2)}</h4>
+        <div className="card border-0 shadow-sm rounded-4 px-4 py-3 bg-white d-flex flex-row align-items-center gap-3">
+          <div>
+            <small className="text-muted">Available Balance</small>
+            <h4 className={`fw-bold mb-0 ${parentBalance < 0 ? "text-danger" : "text-brand"}`}>₹{parentBalance.toFixed(2)}</h4>
+          </div>
+          <button className="btn btn-brand rounded-pill px-3 fw-semibold text-nowrap" onClick={() => setShowAddMoney(true)}>
+            + Add Money
+          </button>
         </div>
       </div>
+
+      {showAddMoney && (
+        <Suspense fallback={null}>
+          <AddMoneyModal
+            onClose={() => setShowAddMoney(false)}
+            onDone={(balance) => setParentBalance(balance)}
+          />
+        </Suspense>
+      )}
 
       <div className="row g-4 mb-4">
         {/* ADD BALANCE FORM */}
