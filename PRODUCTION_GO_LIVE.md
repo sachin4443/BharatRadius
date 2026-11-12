@@ -42,7 +42,12 @@ Repo ka `appsettings.json` **UAT ke liye** hai. Live server par ye values honi c
 | `EmailSettings:Password` | email password badal kar naya |
 | `RadiusServer:ServerAddress` | server ka public IP (routers isi par RADIUS bhejte hain) |
 
-- `ASPNETCORE_ENVIRONMENT` **Production** hona chahiye (IIS default). Development mode mein RADIUS server start nahi hota.
+- `ASPNETCORE_ENVIRONMENT` **Production** hona chahiye (IIS / publish default). Development mode mein RADIUS server
+  start nahi hota aur Swagger khula rehta hai. `Properties/launchSettings.json` sirf Visual Studio se chalane par
+  use hota hai; server par Visual Studio / `dotnet run` se chalate hain to wahan bhi `Production` kariye.
+- `PythonSettings` ab use nahi hota (live traffic / ping C# se), hata bhi sakte hain.
+- Logs: `Logs/radius-log-*.txt`, roz ek file, 30 din, max 100 MB. SQL queries log nahi hoti;
+  troubleshooting ke liye `"Serilog": { "EfSql": true }` thodi der ke liye.
 - UDP **1812 / 1813** (RADIUS) aur **514** (syslog) firewall mein khule hone chahiye.
 - Ek server par ek hi API RADIUS chalaye: UAT API par `BackgroundJobs:RadiusServer=false` (ya alag ports).
 
