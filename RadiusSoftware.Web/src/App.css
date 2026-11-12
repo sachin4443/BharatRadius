@@ -1,0 +1,49 @@
+/* Import Modern Font for Professional Look */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+/* Clean Reset & Layout Styles */
+body, html {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow-x: hidden;
+  /* Beautiful, highly readable font */
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background-color: #f8f9fa; /* Soft background so white cards pop out */
+  color: #2b2b2b;
+}
+
+#root {
+  width: 100%; /* YAHAN CHANGE KIYA HAI: Fixed width (1126px) hata di hai */
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* --- Clean Dashboard Components --- */
+
+/* Softer shadows and rounded corners for a premium feel */
+.card {
+  border: none !important;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03) !important;
+  border-radius: 12px !important;
+}
+
+/* Custom Scrollbar for Modals */
+.modal-content {
+  border: none;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+}
+
+/* Utility classes to make text look crisp */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 600;
+  color: #1a1d20;
+  letter-spacing: -0.02em;
+}
+
+.text-muted {
+  color: #6c757d !important;
+  font-weight: 500;
+}

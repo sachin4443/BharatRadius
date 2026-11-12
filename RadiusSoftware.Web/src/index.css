@@ -1,0 +1,212 @@
+/* Import Modern Font for Professional Look */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@import "tailwindcss";
+/* =========================================
+   1. GLOBAL VARIABLES (For your other pages)
+   ========================================= */
+:root {
+  --text: #6b6375;
+  --text-h: #08060d;
+  --bg: #fff;
+  --border: #e5e4e7;
+  --code-bg: #f4f3ec;
+  --accent: #aa3bff;
+  --accent-bg: rgba(170, 59, 255, 0.1);
+  --accent-border: rgba(170, 59, 255, 0.5);
+  --social-bg: rgba(244, 243, 236, 0.5);
+  --shadow: rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+
+  /* Use Inter as the base font */
+  --sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --heading: 'Inter', system-ui, -apple-system, sans-serif;
+  --mono: ui-monospace, Consolas, monospace;
+
+  color-scheme: light dark;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #9ca3af;
+    --text-h: #f3f4f6;
+    --bg: #16171d;
+    --border: #2e303a;
+    --code-bg: #1f2028;
+    --accent: #c084fc;
+    --accent-bg: rgba(192, 132, 252, 0.15);
+    --accent-border: rgba(192, 132, 252, 0.5);
+    --social-bg: rgba(47, 48, 58, 0.5);
+    --shadow: rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
+  }
+  #social .button-icon {
+    filter: invert(1) brightness(2);
+  }
+}
+
+/* =========================================
+   2. CLEAN RESET & LAYOUT
+   ========================================= */
+body, html {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow-x: hidden;
+  font-family: var(--sans);
+  background-color: #f8f9fa; /* Soft background */
+  color: #2b2b2b;
+}
+
+#root {
+  width: 100%; /* Yahan fixed 1126px hata diya hai */
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* =========================================
+   3. TYPOGRAPHY & COMPONENTS
+   ========================================= */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--heading);
+  font-weight: 600;
+  color: #1a1d20;
+  letter-spacing: -0.02em;
+}
+
+h1 {
+  font-size: 56px;
+  letter-spacing: -1.68px;
+  margin: 32px 0;
+}
+
+h2 {
+  font-size: 24px;
+  line-height: 118%;
+  letter-spacing: -0.24px;
+  margin: 0 0 8px;
+}
+
+@media (max-width: 1024px) {
+  h1 {
+    font-size: 36px;
+    margin: 20px 0;
+  }
+  h2 {
+    font-size: 20px;
+  }
+}
+
+p {
+  margin: 0;
+}
+
+code, .counter {
+  font-family: var(--mono);
+  display: inline-flex;
+  border-radius: 4px;
+  color: var(--text-h);
+}
+
+code {
+  font-size: 15px;
+  line-height: 135%;
+  padding: 4px 8px;
+  background: var(--code-bg);
+}
+
+.text-muted {
+  color: #6c757d !important;
+  font-weight: 500;
+}
+
+/* =========================================
+   4. UI CARDS & MODALS
+   ========================================= */
+.card {
+  border: none !important;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03) !important;
+  border-radius: 12px !important;
+}
+
+.modal-content {
+  border: none;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+}
+/* Custom Global Theme Button */
+.btn-brand {
+  background: linear-gradient(135deg, rgb(245, 113, 22) 0%, rgb(234, 88, 12) 100%);
+  color: #ffffff !important; /* Text hamesha white rahega */
+  border: none;
+  transition: all 0.2s ease-in-out;
+}
+
+.btn-brand:hover {
+  opacity: 0.95;
+  transform: translateY(-1px); /* Hover par thoda sa upar uthega */
+  box-shadow: 0 6px 15px rgba(234, 88, 12, 0.4) !important; /* Orange glow effect */
+  color: #ffffff !important;
+}
+
+.btn-brand:active {
+  transform: translateY(1px); /* Click karne par dabne ka effect */
+  box-shadow: 0 2px 5px rgba(234, 88, 12, 0.4) !important;
+}
+/* Automatically apply Brand Gradient to ALL Modal Headers */
+.modal-header {
+  background: linear-gradient(135deg, rgb(245, 113, 22) 0%, rgb(234, 88, 12) 100%) !important;
+  color: #ffffff !important;
+  border-bottom: none !important;
+}
+
+/* Ensure the title text is always white */
+.modal-header .modal-title {
+  color: #ffffff !important;
+}
+.text-brand {
+  /* Pehle background me gradient lagate hain */
+  background: linear-gradient(135deg, rgb(245, 113, 22) 0%, rgb(234, 88, 12) 100%);
+  
+  /* Phir us background ko sirf text ke andar clip (cut) kar dete hain */
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  
+  transition: all 0.2s ease-in-out;
+}
+/* 🌟 Orange Brand Animated Glowing Border Button */
+.btn-admin-glow {
+  position: relative;
+  background: linear-gradient(135deg, rgb(245, 113, 22) 0%, rgb(234, 88, 12) 100%) !important;
+  color: #ffffff !important;
+  border: none;
+  overflow: hidden;
+  z-index: 1;
+}
+
+/* Orange/White moving light effect around the button */
+.btn-admin-glow::before {
+  content: '';
+  position: absolute;
+  top: -2px; left: -2px; right: -2px; bottom: -2px;
+  background: linear-gradient(45deg, rgb(245, 113, 22), #ffd700, #ffffff, rgb(234, 88, 12), rgb(245, 113, 22));
+  background-size: 400%;
+  z-index: -1;
+  border-radius: 50rem;
+  animation: glowing-border 4s linear infinite;
+}
+
+@keyframes glowing-border {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.btn-admin-glow:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 15px rgba(234, 88, 12, 0.4) !important;
+}

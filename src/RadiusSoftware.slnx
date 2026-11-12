@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="RadiusSoftware.API/RadiusSoftware.API.csproj" />
+  <Project Path="RadiusSoftware.Core/RadiusSoftware.Core.csproj" />
+  <Project Path="RadiusSoftware.Infrastructure/RadiusSoftware.Infrastructure.csproj" />
+</Solution>
